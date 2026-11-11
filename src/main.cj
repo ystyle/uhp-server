@@ -5,19 +5,27 @@
 package uhp_server
 
 import std.collection.{ArrayList, HashMap}
-import std.env.getCommandLine
+import std.env.{getCommandLine, getStdOut}
 import stdx.net.http.*
 import uhp.server.*
 import uhp.types.base.*
 
 const UHP_SERVER_VERSION = "0.1.0"
 
+// 启动日志必须立刻可见：stdout 被重定向到文件/管道时（Docker、systemd、nohup）是块缓冲，
+// 不显式 flush 的话进程被 SIGKILL 时日志全丢——运维只能看到「服务没反应」。
+func info(msg: String): Unit {
+    let out = getStdOut()
+    out.write(msg + "\n")
+    out.flush()
+}
+
 func usage(): Unit {
-    println("uhp-server " + UHP_SERVER_VERSION)
-    println("用法：uhp-server [--config <配置文件>]")
-    println("  --config, -c   配置文件路径（默认 uhp-server.toml）")
-    println("  --help, -h     显示帮助")
-    println("  --version, -V  显示版本")
+    info("uhp-server " + UHP_SERVER_VERSION)
+    info("用法：uhp-server [--config <配置文件>]")
+    info("  --config, -c   配置文件路径（默认 uhp-server.toml）")
+    info("  --help, -h     显示帮助")
+    info("  --version, -V  显示版本")
 }
 
 func fail(msg: String): Int64 {
@@ -35,7 +43,7 @@ main(): Int64 {
             usage()
             return 0
         } else if (a == "--version" || a == "-V") {
-            println("uhp-server " + UHP_SERVER_VERSION)
+            info("uhp-server " + UHP_SERVER_VERSION)
             return 0
         } else if (a == "--config" || a == "-c") {
             i = i + 1
@@ -91,8 +99,8 @@ main(): Int64 {
     } catch (e: Exception) {
         return fail("监听 " + cfg.server.bind + ":" + cfg.server.port.toString() + " 失败：" + e.message)
     }
-    println("uhp-server " + UHP_SERVER_VERSION + " 监听 http://" + cfg.server.bind + ":" + server.port.toString())
-    println("  harnesses: " + names)
+    info("uhp-server " + UHP_SERVER_VERSION + " 监听 http://" + cfg.server.bind + ":" + server.port.toString())
+    info("  harnesses: " + names)
     server.serve()
     return 0
 }

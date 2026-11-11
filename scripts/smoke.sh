@@ -31,6 +31,12 @@ for _ in $(seq 1 100); do
   sleep 0.2
 done
 [ "$code" = "200" ] || { echo "服务未就绪（/tmp/uhp-server-smoke.log）" >&2; exit 3; }
+
+# 启动日志必须可见：stdout 被重定向时若没 flush，线上就只能看到「服务没反应」
+grep -q "uhp-server .* 监听" /tmp/uhp-server-smoke.log || {
+  echo "启动日志缺失（stdout 缓冲未 flush？见 /tmp/uhp-server-smoke.log）" >&2
+  exit 4
+}
 RESP=$(curl -s -m 30 -H "Authorization: Bearer $TOKEN" -H 'UHP-Version: 2026-10-19' \
   -H 'Content-Type: application/json' -d '{"input":"hi","metadata":{"harness_id":"echo"}}' \
   "http://127.0.0.1:$PORT/v1/responses")
