@@ -23,11 +23,9 @@ jobs:
           repository: ystyle/uhp
           path: uhp
 
+      # cordis-cj 目前只有 AtomGit 仓（没有 GitHub 镜像），所以直接 clone。
       - name: Checkout cordis-cj（插件宿主，P1 用）
-        uses: actions/checkout@v4
-        with:
-          repository: ystyle/cordis-cj
-          path: cordis-cj
+        run: git clone --depth 1 https://atomgit.com/ystyle/cordis-cj.git cordis-cj
 
       - uses: Zxilly/setup-cangjie@v3
         with:
