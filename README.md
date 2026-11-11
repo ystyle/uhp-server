@@ -98,7 +98,7 @@ AGENT_CMD="openma-pi-acp" bash scripts/real-smoke.sh     # 换成 pi
 本仓是产品，**不发中心仓**。推 tag（`v0.1.1`）触发 GitHub Actions：
 
 - `artifacts`：构建二进制包（`uhp_server` + `uhp_server.plugin` + 配置样例 + README/LICENSE）→ GitHub Release
-- `container`：构建镜像 → `ghcr.io/ystyle/uhp-server:<版本>` 与 `:latest`
+- `container`：构建镜像 → `ghcr.io/ystyle/uhp-server:v<版本>` 与 `:latest`
 
 流程与两个镜像坑（PID 1 信号、构建上下文）见 [docs/RELEASE.md](docs/RELEASE.md)。
 

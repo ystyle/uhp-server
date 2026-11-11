@@ -5,7 +5,7 @@
 | 产物 | 位置 |
 |---|---|
 | 二进制包（`uhp_server` + `uhp_server.plugin` + 配置样例 + README/LICENSE） | GitHub Release |
-| 容器镜像 | `ghcr.io/ystyle/uhp-server`（tag = 版本号，另有 `latest`） |
+| 容器镜像 | `ghcr.io/ystyle/uhp-server`（tag 与 git tag 一致，如 `v0.1.0`，另有 `latest`） |
 
 ## 前置
 
@@ -38,14 +38,14 @@ gh run list -R ystyle/uhp-server --limit 3
 1. **版本一致性检查**：tag（`v0.1.1` → `0.1.1`）必须等于 `src/main.cj` 的 `UHP_SERVER_VERSION`，
    不一致直接失败（防止发出去的二进制自称另一个版本）；
 2. 构建并打包 → GitHub Release 上传 tar.gz；
-3. 构建镜像 → 推 `ghcr.io/ystyle/uhp-server:<版本>` 与 `:latest`。
+3. 构建镜像 → 推 `ghcr.io/ystyle/uhp-server:v<版本>`（与 git tag 同名）与 `:latest`。
 
 ## 使用发布产物
 
 ```bash
-docker pull ghcr.io/ystyle/uhp-server:0.1.1
+docker pull ghcr.io/ystyle/uhp-server:v0.1.1
 docker run --rm -p 8488:8488 -v "$PWD/uhp-server.toml:/app/uhp-server.toml:ro" \
-  ghcr.io/ystyle/uhp-server:0.1.1
+  ghcr.io/ystyle/uhp-server:v0.1.1
 ```
 
 二进制包解开即用（`uhp_server` 与 `uhp_server.plugin` 必须放同一目录：宿主默认按可执行文件所在目录找插件）。
