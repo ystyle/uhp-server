@@ -41,6 +41,14 @@ bash scripts/build.sh
 docker compose up -d --build          # 挂 ./config/uhp-server.toml，暴露 8488
 ```
 
+真实链路段冒烟（接一个真 agent，默认本机 opencode）：
+
+```bash
+bash scripts/real-smoke.sh                              # opencode acp
+AGENT_CMD="dsh --profile acp" bash scripts/real-smoke.sh # 换成 dsh
+AGENT_CMD="openma-pi-acp" bash scripts/real-smoke.sh     # 换成 pi
+```
+
 > Docker 采用「宿主/CI 产出二进制 → 镜像只打包」的策略（与其他仓颉项目一致）：
 > 二进制为静态运行时，运行镜像只需 `archlinux` 的 glibc/gcc-libs。
 
