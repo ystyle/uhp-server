@@ -1,0 +1,6 @@
+# 镜像上下文只要 dist/（脚本产出）+ 配置样例 + 入口脚本。
+# 不排除的话 docker 会把整个 target/ 发给 daemon（几百 MB）。
+*
+!dist/
+!config/
+!docker/

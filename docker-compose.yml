@@ -1,18 +1,25 @@
 # uhp-server：一键起（配置从 ./config/uhp-server.toml 挂进来）
 #
+#   bash scripts/make-dist.sh                                  # 编译 + 收集 dist/
 #   cp config/uhp-server.example.toml config/uhp-server.toml   # 按需改
-#   bash scripts/build.sh && docker compose up -d --build
+#   docker compose up -d --build
+#
+# 或者直接用发布镜像（免构建）：
+#   docker pull ghcr.io/ystyle/uhp-server:latest
 services:
   uhp-server:
     build:
       context: .
-    image: uhp-server:0.1.0
+    # 发布镜像与本地构建用同一个名字；不想构建时把 build 段注掉即可直接拉
+    image: ghcr.io/ystyle/uhp-server:latest
     container_name: uhp-server
     restart: unless-stopped
     ports:
       - "8488:8488"
     volumes:
       - ./config/uhp-server.toml:/app/uhp-server.toml:ro
+    # 容器内 PID 1 由 docker/entrypoint.sh 承担并转发 SIGTERM；这里给足收尾余量
+    stop_grace_period: 10s
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8488/v1/uhp"]
       interval: 30s

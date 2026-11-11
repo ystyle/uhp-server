@@ -1,0 +1,135 @@
+name: Release
+
+# 触发：推送版本 tag（v*）。本仓是**产品**，不发中心仓——发布物是：
+#   ① GitHub Release 里的二进制包（uhp_server + uhp_server.plugin）
+#   ② ghcr.io 容器镜像
+#
+# 为什么用 tag 而不是「GitHub 上手工发 Release」：
+#   主仓在 AtomGit，tag 是两侧唯一事实来源——`git tag vX.Y.Z && git push origin vX.Y.Z`
+#   会把同一个 tag 同步到 GitHub，工作流据此构建，不会出现「只在 GitHub 发版、AtomGit 没 tag」。
+#
+# 发版步骤见 docs/RELEASE.md
+on:
+  push:
+    tags: ['v*']
+
+env:
+  # 依赖仓：开发期是 path 依赖（../uhp/* 与 ../cordis-cj/*），发布时从对应仓取
+  UHP_REPO: ${{ vars.UHP_REPO || 'ystyle/uhp' }}
+  CORDIS_REPO_URL: ${{ vars.CORDIS_REPO_URL || 'https://atomgit.com/ystyle/cordis-cj.git' }}
+
+jobs:
+  artifacts:
+    name: 二进制包
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout uhp-server
+        uses: actions/checkout@v4
+        with:
+          path: uhp-server
+
+      - name: Checkout uhp（SDK + 适配器，path 依赖）
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UHP_REPO }}
+          path: uhp
+
+      - name: Checkout cordis-cj（插件宿主，path 依赖）
+        run: git clone --depth 1 "${{ env.CORDIS_REPO_URL }}" cordis-cj
+
+      - uses: Zxilly/setup-cangjie@v3
+        with:
+          channel: sts
+          version: 1.2.0
+          components: stdx
+
+      # tag 与源码里的版本号必须一致：否则发出去的二进制会自称另一个版本
+      - name: 版本一致性检查
+        working-directory: uhp-server
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          code=$(grep -oP 'const UHP_SERVER_VERSION = "\K[^"]+' src/main.cj)
+          echo "tag=$tag code=$code"
+          [ "$tag" = "$code" ] || { echo "tag（$tag）与 src/main.cj 的 UHP_SERVER_VERSION（$code）不一致" >&2; exit 1; }
+
+      - name: Build + 收集 dist
+        working-directory: uhp-server
+        env:
+          CANGJIE_STDX_PATH: ${{ env.CANGJIE_STDX_PATH_STATIC }}/stdx
+        run: bash scripts/make-dist.sh
+
+      - name: 打 tar 包
+        working-directory: uhp-server
+        run: |
+          VERSION="${{ github.ref_name }}"
+          DIR="uhp-server_${VERSION}_linux_amd64"
+          mkdir -p "dist/$DIR"
+          cp dist/uhp_server dist/uhp_server.plugin "dist/$DIR/"
+          cp config/uhp-server.example.toml "dist/$DIR/uhp-server.example.toml"
+          cp README.md LICENSE "dist/$DIR/"
+          tar -czf "dist/$DIR.tar.gz" -C dist "$DIR"
+          ls -lh dist/*.tar.gz
+
+      - name: 创建/更新 GitHub Release 并上传产物
+        uses: softprops/action-gh-release@v2
+        with:
+          files: uhp-server/dist/*.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  container:
+    name: 容器镜像（ghcr.io）
+    runs-on: ubuntu-24.04
+    needs: artifacts
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout uhp-server
+        uses: actions/checkout@v4
+        with:
+          path: uhp-server
+
+      - name: Checkout uhp（path 依赖）
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UHP_REPO }}
+          path: uhp
+
+      - name: Checkout cordis-cj（path 依赖）
+        run: git clone --depth 1 "${{ env.CORDIS_REPO_URL }}" cordis-cj
+
+      - uses: Zxilly/setup-cangjie@v3
+        with:
+          channel: sts
+          version: 1.2.0
+          components: stdx
+
+      - name: Build + 收集 dist
+        working-directory: uhp-server
+        env:
+          CANGJIE_STDX_PATH: ${{ env.CANGJIE_STDX_PATH_STATIC }}/stdx
+        run: bash scripts/make-dist.sh
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: uhp-server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

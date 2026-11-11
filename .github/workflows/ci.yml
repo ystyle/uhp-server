@@ -44,3 +44,38 @@ jobs:
         env:
           CANGJIE_STDX_PATH: ${{ env.CANGJIE_STDX_PATH_STATIC }}/stdx
         run: timeout 600 cjpm test -j 4
+
+      # 打包产物给镜像任务用（target/ 不进镜像上下文，见 .dockerignore）
+      - name: 收集镜像产物（dist/）
+        working-directory: uhp-server
+        env:
+          CANGJIE_STDX_PATH: ${{ env.CANGJIE_STDX_PATH_STATIC }}/stdx
+        run: bash scripts/make-dist.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uhp-server-dist
+          path: uhp-server/dist
+          if-no-files-found: error
+
+  docker:
+    name: 镜像构建 · 容器冒烟
+    runs-on: ubuntu-24.04
+    needs: build-test
+    # PR 上只跑构建测试；镜像只在 master 推送上验一次
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: uhp-server-dist
+          path: dist
+
+      - name: Build image
+        run: docker build -t uhp-server:ci .
+
+      # 冒烟覆盖三件容易在镜像里丢掉的事：进程内 harness、插件进程 harness（uhp_server.plugin 在不在）、
+      # 以及 SIGTERM 处理（PID 1 会忽略未处理信号 → 没有入口脚本转发就会等满 10s）
+      - name: 容器冒烟（含插件进程与停止耗时）
+        run: bash scripts/docker-smoke.sh uhp-server:ci 18488

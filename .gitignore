@@ -2,3 +2,5 @@
 *.cjp
 uhp-server.toml
 !.gitignore
+.smoke/
+/dist

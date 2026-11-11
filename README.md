@@ -38,11 +38,20 @@ curl -s -H 'Authorization: Bearer dev-token' -H 'UHP-Version: 2026-10-19' \
   http://127.0.0.1:8488/v1/responses
 ```
 
-一键部署：
+一键部署（本地构建）：
 
 ```bash
-bash scripts/build.sh
-docker compose up -d --build          # 挂 ./config/uhp-server.toml，暴露 8488
+bash scripts/make-dist.sh                            # 编译 + 收集 dist/（镜像上下文只要它）
+cp config/uhp-server.example.toml config/uhp-server.toml
+docker compose up -d --build                         # 挂 ./config/uhp-server.toml，暴露 8488
+```
+
+用发布镜像（免构建）：
+
+```bash
+docker pull ghcr.io/ystyle/uhp-server:latest
+docker run --rm -p 8488:8488 -v "$PWD/config/uhp-server.toml:/app/uhp-server.toml:ro" \
+  ghcr.io/ystyle/uhp-server:latest
 ```
 
 真实链路段冒烟（接一个真 agent，默认本机 opencode）：
@@ -84,8 +93,18 @@ AGENT_CMD="openma-pi-acp" bash scripts/real-smoke.sh     # 换成 pi
 可运行的参照实现：[src/examples/echo_plugin/main.cj](src/examples/echo_plugin/main.cj)——它被
 `src/echo_plugin_test.cj` 端到端跑过（配置片段与文档逐字一致）。
 
+## 发布
+
+本仓是产品，**不发中心仓**。推 tag（`v0.1.1`）触发 GitHub Actions：
+
+- `artifacts`：构建二进制包（`uhp_server` + `uhp_server.plugin` + 配置样例 + README/LICENSE）→ GitHub Release
+- `container`：构建镜像 → `ghcr.io/ystyle/uhp-server:<版本>` 与 `:latest`
+
+流程与两个镜像坑（PID 1 信号、构建上下文）见 [docs/RELEASE.md](docs/RELEASE.md)。
+
 ## 文档
 
+- **发布与镜像**：[docs/RELEASE.md](docs/RELEASE.md)
 - **自己写适配器（插件进程 / 进程内驱动）**：[docs/writing-a-harness.md](docs/writing-a-harness.md)
 - 设计（装配、进程模型、P0/P1 路线）：[docs/design.md](docs/design.md)
 - 各 harness 的 ACP 能力矩阵：[uhp-acp/docs/support.md](https://atomgit.com/ystyle/uhp/blob/master/uhp-acp/docs/support.md)
