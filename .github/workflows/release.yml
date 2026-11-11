@@ -13,11 +13,6 @@ on:
   push:
     tags: ['v*']
 
-env:
-  # 依赖仓：开发期是 path 依赖（../uhp/* 与 ../cordis-cj/*），发布时从对应仓取
-  UHP_REPO: ${{ vars.UHP_REPO || 'ystyle/uhp' }}
-  CORDIS_REPO_URL: ${{ vars.CORDIS_REPO_URL || 'https://atomgit.com/ystyle/cordis-cj.git' }}
-
 jobs:
   artifacts:
     name: 二进制包
@@ -30,15 +25,7 @@ jobs:
         with:
           path: uhp-server
 
-      - name: Checkout uhp（SDK + 适配器，path 依赖）
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UHP_REPO }}
-          path: uhp
-
-      - name: Checkout cordis-cj（插件宿主，path 依赖）
-        run: git clone --depth 1 "${{ env.CORDIS_REPO_URL }}" cordis-cj
-
+      # 依赖全部来自中心仓（uhp 0.1.1 / cordis 0.3.1），无需 checkout 兄弟仓
       - uses: Zxilly/setup-cangjie@v3
         with:
           channel: sts
@@ -92,15 +79,7 @@ jobs:
         with:
           path: uhp-server
 
-      - name: Checkout uhp（path 依赖）
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.UHP_REPO }}
-          path: uhp
-
-      - name: Checkout cordis-cj（path 依赖）
-        run: git clone --depth 1 "${{ env.CORDIS_REPO_URL }}" cordis-cj
-
+      # 依赖全部来自中心仓（uhp 0.1.1 / cordis 0.3.1），无需 checkout 兄弟仓
       - uses: Zxilly/setup-cangjie@v3
         with:
           channel: sts
