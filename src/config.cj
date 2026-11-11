@@ -64,6 +64,9 @@ func stringsOr(dms: DataModelStruct, key: String): ArrayList<String> {
 public class ServerSection <: Serializable<ServerSection> {
     public var bind: String = "127.0.0.1"
     public var port: Int64 = 8488
+    // 增量批量窗口（毫秒）：插件进程上报的 text/reasoning/tool_args 片段先攒再成批交给 UHP 的事件通道。
+    // 0 = 关闭（每条都立即转发）。默认 25ms：保留「渐进」观感，又把 sink 调用次数降一个量级。
+    public var event_batch_ms: Int64 = 25
     // 空闲会话的存活秒数：0 = 不回收（默认）。长跑部署建议开（如 1800）。
     // UHP 协议没有删除会话的端点，会话什么时候消失由宿主决定，这里就是那个决定。
     public var session_ttl_seconds: Int64 = 0
@@ -72,6 +75,7 @@ public class ServerSection <: Serializable<ServerSection> {
         return DataModelStruct()
             .add(field<String>("bind", this.bind))
             .add(field<Int64>("port", this.port))
+            .add(field<Int64>("event_batch_ms", this.event_batch_ms))
             .add(field<Int64>("session_ttl_seconds", this.session_ttl_seconds))
     }
     public static func deserialize(dm: DataModel): ServerSection {
@@ -79,6 +83,7 @@ public class ServerSection <: Serializable<ServerSection> {
         let r = ServerSection()
         r.bind = stringOr(dms, "bind", r.bind)
         r.port = intOr(dms, "port", r.port)
+        r.event_batch_ms = intOr(dms, "event_batch_ms", r.event_batch_ms)
         r.session_ttl_seconds = intOr(dms, "session_ttl_seconds", r.session_ttl_seconds)
         return r
     }

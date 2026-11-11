@@ -73,6 +73,7 @@ AGENT_CMD="openma-pi-acp" bash scripts/real-smoke.sh     # 换成 pi
 |---|---|---|
 | `[server]` | `bind` / `port` | 监听地址（默认 `127.0.0.1:8488`）；对外提供服务时配 `0.0.0.0` |
 | `[server]` | `session_ttl_seconds` | 空闲会话存活秒数，`0` = 不回收（默认）；长跑部署建议开（如 `1800`） |
+| `[server]` | `event_batch_ms` | 增量批量窗口（默认 `25`）：插件进程上报的高频片段先攒后合并成批下发；`0` = 关闭 |
 | `[[tokens]]` | `token` / `principal` | 客户端凭证；一个客户端一个 token |
 | `[[harnesses]]` | `id` / `name` / `base` / `kind` / `default_model` / `enabled` | harness 身份与类型 |
 | `kind = "acp"` | `command` / `args` / `cwd` / `session_mode` / `timeout_seconds` / `permission_timeout_seconds` | 拉起的 ACP agent；`session_mode = serial \| parallel` |

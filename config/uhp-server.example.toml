@@ -3,6 +3,11 @@
 [server]
 bind = "127.0.0.1"
 port = 8488
+# 增量批量窗口（毫秒）：插件进程的上报先攒 25ms 再合并成批交给 UHP 的事件通道；
+# 0 = 每条都立即转发（想看原始粒度时用）
+event_batch_ms = 25
+# 空闲会话存活秒数：0 = 不回收。长跑部署建议开（如 1800）
+session_ttl_seconds = 0
 
 # 客户端凭证：token -> principal（建议一个客户端一个 token）
 [[tokens]]

@@ -22,6 +22,25 @@ import uhp_acp.nowMillis
 
 const HARNESS_EVENT = "harness/event"
 
+// 增量批量窗口的字节上限：攒到这么多就不等窗口，立刻冲一次
+const FLUSH_BYTES: Int64 = 4096
+
+// 参与批量的片段类型：高频、纯增量、彼此同类。
+// tool_call / tool_result / file / outcome 不参与——它们有顺序与即时性要求，不能攒。
+func isBufferedKind(kind: String): Bool {
+    return kind == "text" || kind == "reasoning" || kind == "tool_args"
+}
+
+// 一次待交付的批次（在锁外交付，避免持锁调用 TurnSink）
+class PendingBatch {
+    public let sink: Option<TurnSink>
+    public let items: Array<(String, String)>
+    public init(sink: Option<TurnSink>, items: Array<(String, String)>) {
+        this.sink = sink
+        this.items = items
+    }
+}
+
 // 一路回合的接收端：插件会把增量事件按 sessionId 回传，host 按会话找到它。
 class TurnSinkSlot {
     public var sink: Option<TurnSink> = None
@@ -31,6 +50,10 @@ class TurnSinkSlot {
     // 插件要提问时先落在这里：TurnSink.ask 必须由回合线程调用（它要发 input_request），
     // 而事件是在 stderr 转发线程上收到的，所以分两步：线程登记 → 回合线程取走并上报。
     public var askEvent: Option<AskEvent> = None
+    // 批量窗口：待交付的片段（kind, text）与首片时间
+    public let pending: ArrayList<(String, String)> = ArrayList<(String, String)>()
+    public var pendingBytes: Int64 = 0
+    public var lastFlushMs: Int64 = 0
 }
 
 // 插件侧的一次提问（对应 UHP 的一个 input_request）
@@ -62,14 +85,18 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
     // 回合结果槽：插件那条 invoke 可能跨两轮（提问中断 + 答案续跑），所以槽要在驱动里存着
     private let outcomes: HashMap<String, OutcomeBox> = HashMap<String, OutcomeBox>()
     private let timeoutSeconds: Int64
+    // 批量窗口（毫秒）：<= 0 表示关闭，每条都立即转发
+    private let batchMs: Int64
+    private var flusherOn: Bool = false
 
     public init(pluginSource: String, pluginArgs: Array<String>, base: String, label: String,
-                timeoutSeconds!: Int64 = 600) {
+                timeoutSeconds!: Int64 = 600, batchMs!: Int64 = 25) {
         this.pluginSource = pluginSource
         this.pluginArgs = pluginArgs
         this.baseName = base
         this.label = label
         this.timeoutSeconds = timeoutSeconds
+        this.batchMs = batchMs
     }
 
     public func base(): String {
@@ -148,6 +175,8 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             // 1) 回合结束
             match (outcomeBox.get()) {
                 case Some(status) =>
+                    // 终态是通过 invoke 返回拿到的（不一定有 outcome 事件），必须在这里冲刷
+                    this.flushSession(ctx.sessionId)
                     synchronized(this.lock) {
                         this.slots.remove(ctx.sessionId)
                         this.outcomes.remove(ctx.sessionId)
@@ -174,6 +203,7 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                     synchronized(this.lock) {
                         this.pendingAsks[ctx.sessionId] = a.requestId
                     }
+                    this.flushSession(ctx.sessionId)
                     eprintln("[harness-plugin] 提问已上报 request=" + requestId + " plugin=" + a.requestId)
                     return TurnOutcome.Incomplete(IncompleteReason.InputRequired, None)
                 case None => ()
@@ -303,6 +333,7 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                     this.instance = Some(active)
             }
         }
+        this.ensureFlusher()
         return Some(active)
     }
 
@@ -353,8 +384,34 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             }
             return
         }
+        if (kind == "outcome") {
+            // 终态必须排在所有增量之后：先把攒着的冲掉
+            match (this.takeBatch(sessionId)) {
+                case Some(b) => this.deliver(b)
+                case None => ()
+            }
+            synchronized(this.lock) {
+                match (this.slots.get(sessionId)) {
+                    case Some(slot) =>
+                        slot.outcome = Some(text)
+                        slot.sink = None
+                    case None => ()
+                }
+            }
+            return
+        }
+        if (this.batchMs > 0 && isBufferedKind(kind)) {
+            // 高频片段：攒着，等窗口到期或攒满字节数再成批交付
+            let _ = this.bufferEvent(sessionId, kind, text)
+            return
+        }
+        // 控制性事件（工具调用/产物等）：先冲掉攒着的，保证输出顺序
+        match (this.takeBatch(sessionId)) {
+            case Some(b) => this.deliver(b)
+            case None => ()
+        }
         match (sinkOpt) {
-            case Some(sink) => this.dispatch(sink, sessionId, kind, text)
+            case Some(sink) => this.dispatchContent(sink, kind, text)
             case None => ()
         }
     }
@@ -412,7 +469,130 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         return Some((name, bytes))
     }
 
-    private func dispatch(sink: TurnSink, sessionId: String, kind: String, text: String): Unit {
+    // 攒一条片段；攒满 FLUSH_BYTES 立刻冲一次（不持锁调用 sink）
+    private func bufferEvent(sessionId: String, kind: String, text: String): Bool {
+        var buffered = false
+        var shouldFlush = false
+        synchronized(this.lock) {
+            match (this.slots.get(sessionId)) {
+                case Some(slot) =>
+                    if (slot.pending.size == 0) {
+                        slot.lastFlushMs = nowMillis()
+                    }
+                    slot.pending.add((kind, text))
+                    slot.pendingBytes = slot.pendingBytes + Int64(text.size)
+                    buffered = true
+                    shouldFlush = slot.pendingBytes >= FLUSH_BYTES
+                case None => ()
+            }
+        }
+        if (shouldFlush) {
+            match (this.takeBatch(sessionId)) {
+                case Some(b) => this.deliver(b)
+                case None => ()
+            }
+        }
+        return buffered
+    }
+
+    // 把该会话攒着的片段取出来（拿走即清空）。锁内只搬数据，交付在锁外。
+    private func takeBatch(sessionId: String): Option<PendingBatch> {
+        let (sink, items): (Option<TurnSink>, Array<(String, String)>) = synchronized(this.lock) {
+            match (this.slots.get(sessionId)) {
+                case Some(slot) =>
+                    if (slot.pending.size == 0) {
+                        (slot.sink, Array<(String, String)>())
+                    } else {
+                        let copy = ArrayList<(String, String)>(slot.pending)
+                        slot.pending.clear()
+                        slot.pendingBytes = 0
+                        slot.lastFlushMs = nowMillis()
+                        (slot.sink, copy.toArray())
+                    }
+                case None => (None, Array<(String, String)>())
+            }
+        }
+        if (items.size == 0) {
+            return None
+        }
+        return Some(PendingBatch(sink, items))
+    }
+
+    private func deliver(batch: PendingBatch): Unit {
+        match (batch.sink) {
+            case Some(sink) =>
+                // 合并相邻同类型片段：批量窗口内攒的 20 个 token 应该是 1 个 delta，
+                // 不是 20 次调用（后者对 UHP 的事件通道没有任何改善）。
+                var curKind = ""
+                var curText = ""
+                for ((kind, text) in batch.items) {
+                    if (kind != curKind && curText.size > 0) {
+                        this.dispatchContent(sink, curKind, curText)
+                        curText = ""
+                    }
+                    curKind = kind
+                    curText = curText + text
+                }
+                if (curText.size > 0) {
+                    this.dispatchContent(sink, curKind, curText)
+                }
+            case None => ()
+        }
+    }
+
+    // 立刻冲刷某个会话攒着的片段（回合收口 / 提问前 / 出错前都要调）
+    private func flushSession(sessionId: String): Unit {
+        match (this.takeBatch(sessionId)) {
+            case Some(b) => this.deliver(b)
+            case None => ()
+        }
+    }
+
+    // 到窗口就冲：每 10ms 扫一遍，早于 batchMs 未冲的批次取出来交付
+    private func flushStale(): Unit {
+        let due = ArrayList<String>()
+        synchronized(this.lock) {
+            let now = nowMillis()
+            for ((sid, slot) in this.slots) {
+                if (slot.pending.size > 0 && now - slot.lastFlushMs >= this.batchMs) {
+                    due.add(sid)
+                }
+            }
+        }
+        for (sid in due) {
+            match (this.takeBatch(sid)) {
+                case Some(b) => this.deliver(b)
+                case None => ()
+            }
+        }
+    }
+
+    // 冲刷线程：一个驱动一条，懒启动（只有开启批量时才起）
+    private func ensureFlusher(): Unit {
+        if (this.batchMs <= 0) {
+            return
+        }
+        var start = false
+        synchronized(this.lock) {
+            if (!this.flusherOn) {
+                this.flusherOn = true
+                start = true
+            }
+        }
+        if (!start) {
+            return
+        }
+        let self = this
+        spawn {
+            while (true) {
+                sleep(Duration.millisecond * 10)
+                self.flushStale()
+            }
+        }
+    }
+
+    // 交付一条内容事件（批量与直发共用）；outcome 在 onEventLine 里单独处理
+    private func dispatchContent(sink: TurnSink, kind: String, text: String): Unit {
         match (kind) {
             case "text" => sink.textDelta(text)
             case "reasoning" => sink.reasoningDelta(text)
@@ -435,15 +615,6 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                 }
             case "ask_unsupported" =>
                 eprintln("[harness-plugin] 插件侧发起提问但跨进程问答未实现：" + text)
-            case "outcome" =>
-                synchronized(this.lock) {
-                    match (this.slots.get(sessionId)) {
-                        case Some(slot) =>
-                            slot.outcome = Some(text)
-                            slot.sink = None
-                        case None => ()
-                    }
-                }
             case _ => ()
         }
     }

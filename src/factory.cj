@@ -57,7 +57,7 @@ public func buildHarnesses(cfg: ServerConfig): Array<ConfiguredHarness> {
         let label = if (h.name.size > 0) { h.name } else { h.id }
         let base = if (h.base.size > 0) { h.base } else { defaultBase(h.kind) }
         let model = if (h.default_model.size > 0) { h.default_model } else { "auto" }
-        let driver = buildDriver(h, label)
+        let driver = buildDriver(h, label, cfg.server.event_batch_ms)
         out.add(ConfiguredHarness(h.id, label, base, model, driver))
     }
     if (out.size == 0) {
@@ -114,10 +114,10 @@ func pluginArgsOf(h: HarnessSpec): Array<String> {
     return out.toArray()
 }
 
-func buildDriver(h: HarnessSpec, label: String): HarnessDriver {
+func buildDriver(h: HarnessSpec, label: String, batchMs: Int64): HarnessDriver {
     if (h.isolate) {
         return CordisHarnessDriver(pluginBinary(h), pluginArgsOf(h), defaultBase(h.kind), label,
-            timeoutSeconds: h.timeout_seconds)
+            timeoutSeconds: h.timeout_seconds, batchMs: batchMs)
     }
     match (h.kind) {
         case "scripted" =>
