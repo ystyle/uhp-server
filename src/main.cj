@@ -101,6 +101,34 @@ main(): Int64 {
     }
     info("uhp-server " + UHP_SERVER_VERSION + " 监听 http://" + cfg.server.bind + ":" + server.port.toString())
     info("  harnesses: " + names)
+    if (cfg.server.session_ttl_seconds > 0) {
+        info("  会话 TTL：" + cfg.server.session_ttl_seconds.toString() + " 秒（空闲即回收）")
+    }
+    startSessionReaper(engine, cfg.server.session_ttl_seconds)
     server.serve()
+    // serve() 正常返回 = 服务已经关了：把 driver 持有的子进程/连接一起收掉。
+    // 注意：Cangjie 没有信号注册接口，SIGTERM 会直接结束进程；此时靠 ACP agent 的 stdin
+    // 收到 EOF 自行退出兜底（实测 dsh / pi-acp / opencode acp 都会）。
+    engine.close()
     return 0
+}
+
+// 会话 TTL 驱逐：按固定间隔扫一遍空闲会话。idleSeconds <= 0 = 关闭。
+//
+// 为什么要做：协议的会话是服务端内存状态，没有删除端点；长跑服务不回收的话，
+// 会话记录与 agent 侧作用域会一直涨（每个会话在 agent 里都是一份上下文）。
+func startSessionReaper(engine: Engine, idleSeconds: Int64): Unit {
+    if (idleSeconds <= 0) {
+        return
+    }
+    let tick = if (idleSeconds < 30) { idleSeconds } else { 30 }
+    spawn {
+        while (true) {
+            sleep(Duration.second * tick)
+            let n = engine.reapIdleSessions(idleSeconds)
+            if (n > 0) {
+                info("会话 TTL：回收 " + n.toString() + " 个空闲会话")
+            }
+        }
+    }
 }

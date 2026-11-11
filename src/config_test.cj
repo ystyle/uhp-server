@@ -115,3 +115,18 @@ func factory_skips_disabled_harness(): Unit {
     @Expect(harnesses.size, 1)
     @Expect(harnesses[0].id, "on")
 }
+
+@Test
+func config_reads_session_ttl(): Unit {
+    let toml = """
+    [server]
+    port = 9001
+    session_ttl_seconds = 1800
+    """
+    let cfg = parseConfig(toml)
+    @Expect(cfg.server.session_ttl_seconds, 1800)
+    // 缺省 = 不回收
+    let dflt = parseConfig("[server]\nport = 9002\n")
+    @Expect(dflt.server.session_ttl_seconds, 0)
+}
+

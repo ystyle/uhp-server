@@ -49,12 +49,16 @@ uhp-server 进程（单二进制）
 
 UHP 规范**没有** `DELETE /v1/sessions/{id}`：会话由服务端持有、按自己的策略回收。
 
-P0 约定：
+约定：
 
 - 会话与响应都在内存；**重启即丢**（协议不要求持久化）。客户端按 404/新会话处理；
 - 会话内同时只允许一个进行中的响应（协议要求，第二个 409 `session_busy`）；并发靠多会话；
-- P1 要加的是**服务端会话 TTL/驱逐**：驱逐时调用 driver 的 `closeSession()`，否则 ACP 会话会一直挂在 agent 里。
-  这需要 `uhp` 侧提供可选生命周期接口（见 §7 待办）。
+- **会话 TTL 驱逐**（`session_ttl_seconds`，默认关）：后台线程按 `min(ttl, 30s)` 的间隔调
+  `Engine.reapIdleSessions`，收掉空闲且没有回合在跑的会话，并触发 driver 的 `closeSession()`。
+  这是长跑部署必须开的一项——否则会话记录与 agent 侧上下文只增不减。
+- 退出：`serve()` 返回后调 `Engine.close()` 收子进程/连接。Cangjie 没有信号注册接口，
+  SIGTERM 会直接结束进程；此时靠「父进程退出 → 子进程 stdin EOF → agent 自行退出」兜底
+  （dsh / pi-acp / opencode acp 实测都会）。
 
 ## 5. 鉴权与网络
 

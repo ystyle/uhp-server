@@ -64,17 +64,22 @@ func stringsOr(dms: DataModelStruct, key: String): ArrayList<String> {
 public class ServerSection <: Serializable<ServerSection> {
     public var bind: String = "127.0.0.1"
     public var port: Int64 = 8488
+    // 空闲会话的存活秒数：0 = 不回收（默认）。长跑部署建议开（如 1800）。
+    // UHP 协议没有删除会话的端点，会话什么时候消失由宿主决定，这里就是那个决定。
+    public var session_ttl_seconds: Int64 = 0
     public init() {}
     public func serialize(): DataModel {
         return DataModelStruct()
             .add(field<String>("bind", this.bind))
             .add(field<Int64>("port", this.port))
+            .add(field<Int64>("session_ttl_seconds", this.session_ttl_seconds))
     }
     public static func deserialize(dm: DataModel): ServerSection {
         let dms = asStruct(dm, "server")
         let r = ServerSection()
         r.bind = stringOr(dms, "bind", r.bind)
         r.port = intOr(dms, "port", r.port)
+        r.session_ttl_seconds = intOr(dms, "session_ttl_seconds", r.session_ttl_seconds)
         return r
     }
 }
