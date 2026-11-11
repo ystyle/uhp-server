@@ -99,12 +99,24 @@ uhp-server（host）
 首帧之后插件连接就被打断（接收/写路径不是线程无关的）。stderr 由宿主逐行转发，
 天然串行、不占协议通道，控制面（invoke）与数据面（增量）也顺带分开了。
 
-仍待做（P1-c）：
+跨进程问答（P1-c 已完成）：
+
+```text
+插件：sink.ask() 登记 requestId → 上报 kind=ask → 挂起等答案
+宿主：onEventLine 把 ask 落进 slot → 回合线程取走调 TurnSink.ask()（发 input_request）
+      → 本轮以 incomplete(input_required) 收口，并把「插件 requestId ↔ 会话」记进 pendingAsks
+下一轮：run(ctx) 带 answers → 宿主用 answer 方法把答案送回插件 → 插件那条 run invoke 继续跑完
+```
+
+要点：**不重新发起回合**（插件里驱动还挂在 ask 上，重发会开两条回合）；
+答案按 requestId 校验（迟到的旧答案喂不进新提问）；
+事件在 stderr 线程收，`sink.ask` 必须由回合线程调，所以中间隔一层 slot 交接。
+
+仍待做（P1-c 剩余）：
 
 | 项 | 说明 |
 |---|---|
 | 产物字节 | 现在只上报文件名（`producedFile` 的字节没跨进程）——要么 base64，要么宿主侧回读 |
-| 跨进程问答 | permission / elicitation 的两轮回路：插件挂起 → host 转 `input_request` → 下一轮答案回填；现在 `capabilities` 如实报 false |
 | 崩溃感知 | 在跑的回合应明确失败而不是等超时 |
 | 增量合并 | 高吞吐时按 20–50ms 批量写 TurnSink（现在是每条一写） |
 

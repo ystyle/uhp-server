@@ -18,9 +18,11 @@ import std.collection.{ArrayList, HashMap}
 import std.convert.*
 import std.env.getCommandLine
 import std.sync.{AtomicBool, AtomicInt64, Mutex}
+import std.time.DateTime
 import jsonvalue.*
 import ystyle::cordis_plugin.*
 import uhp.server.*
+import uhp.types.generated.*
 import uhp_acp.*
 import uhp_opencode.*
 
@@ -93,6 +95,9 @@ func buildDriver(p: PluginArgs, label: String): HarnessDriver {
                 n = n + 1
             }
             return ScriptedHarness(steps.toArray(), TurnOutcome.Completed(None), delayMillis: p.delayMs)
+        case "ask" =>
+            // 测试用后端：先提问，拿到答案再完成。用来验证跨进程两轮问答。
+            return AskDriver()
         case "acp" =>
             if (p.command.size == 0) {
                 throw Exception("backend=acp 需要 --command")
@@ -109,8 +114,46 @@ func buildDriver(p: PluginArgs, label: String): HarnessDriver {
 }
 
 // 回合状态：一个会话一个（同一会话的回合由宿主保证串行）
+//
+// 问答（permission / elicitation）的跨进程回路：
+//   插件侧 ask() 挂起在 askAnswer 上 → 上报 "ask" 事件 → 宿主转发成 UHP 的 input_request；
+//   下一轮宿主用 answer() 把答案送回来 → ask() 返回 → 驱动继续跑（同一条 run invoke 还在飞）。
 class TurnSlot {
     public let cancel = CancelToken()
+    private let lock = Mutex()
+    private var requestId: String = ""
+    private var answer: Option<String> = None
+    private var answerFor: String = ""
+
+    public init() {}
+
+    public func beginAsk(rid: String): Unit {
+        synchronized(this.lock) {
+            this.requestId = rid
+            this.answer = None
+            this.answerFor = ""
+        }
+    }
+
+    // 答案必须对得上请求 id：迟到的旧答案不能喂给新的提问
+    public func offerAnswer(rid: String, value: String): Bool {
+        synchronized(this.lock) {
+            if (rid != this.requestId) {
+                return false
+            }
+            this.answerFor = rid
+            this.answer = Some(value)
+            return true
+        }
+    }
+
+    public func takeAnswer(): Option<String> {
+        synchronized(this.lock) {
+            let a = this.answer
+            this.answer = None
+            return a
+        }
+    }
 }
 
 main(): Int64 {
@@ -155,7 +198,7 @@ main(): Int64 {
                     synchronized(slotsLock) {
                         slots[sessionId] = slot
                     }
-                    let sink = StreamingSink(ctx, sessionId, seq)
+                    let sink = StreamingSink(ctx, sessionId, seq, slot, p.timeoutSeconds)
                     let ctxArg = TurnContext(sessionId, input, "")
                     let outcome = try {
                         driver.run(ctxArg, sink, slot.cancel)
@@ -166,6 +209,18 @@ main(): Int64 {
                         slots.remove(sessionId)
                     }
                     JsonValue.String(outcomeName(outcome))
+                case "answer" =>
+                    // 宿主把用户答案送回来：只认对得上请求 id 的答案
+                    let sessionId = jsonStr(args, 0)
+                    let rid = jsonStr(args, 1)
+                    let answer = jsonStr(args, 2)
+                    let accepted = synchronized(slotsLock) {
+                        match (slots.get(sessionId)) {
+                            case Some(s) => s.offerAnswer(rid, answer)
+                            case None => false
+                        }
+                    }
+                    JsonValue.Boolean(accepted)
                 case "cancel" =>
                     let sessionId = jsonStr(args, 0)
                     synchronized(slotsLock) {
@@ -224,10 +279,15 @@ class StreamingSink <: TurnSink {
     private let ctx: PluginContext
     private let sessionId: String
     private let seq: AtomicInt64
-    public init(ctx: PluginContext, sessionId: String, seq: AtomicInt64) {
+    private let slot: TurnSlot
+    private let timeoutSeconds: Int64
+    public init(ctx: PluginContext, sessionId: String, seq: AtomicInt64, slot: TurnSlot,
+                timeoutSeconds: Int64) {
         this.ctx = ctx
         this.sessionId = sessionId
         this.seq = seq
+        this.slot = slot
+        this.timeoutSeconds = timeoutSeconds
     }
     // 增量走 **stderr 的 JSON 行**，不走 cordis emit：
     // 实测 cordis 的 emit 在「invoke handler 线程里连续上报」时会把接收/写路径搞坏
@@ -271,9 +331,64 @@ class StreamingSink <: TurnSink {
     public func producedFile(filename: String, content: Array<UInt8>): Unit {
         emit(this.ctx, this.sessionId, this.seq, "file", filename)
     }
-    // 问答要走完整的两轮回路（插件挂起 + 宿主转发 input_request + 下一轮答案回填），P1-c 再做
+    // 跨进程问答：上报 ask 事件后挂起等 answer() 送答案回来。
+    // 超时返回空串 = 没拿到答案（驱动按「用户未作答」处理，不该假装选了某个选项）。
     public func ask(kind: String, prompt: String, options: Array<(String, String)>): String {
-        emit(this.ctx, this.sessionId, this.seq, "ask_unsupported", prompt)
+        let _ = this.seq.fetchAdd(1)
+        let n = this.seq.load()
+        let rid = "ask_" + n.toString()
+        this.slot.beginAsk(rid)
+        let opts = ArrayList<JsonValue>()
+        for ((id, label) in options) {
+            let o = HashMap<String, JsonValue>()
+            o["id"] = JsonValue.String(id)
+            o["label"] = JsonValue.String(label)
+            opts.add(JsonValue.Map(o))
+        }
+        let payload = HashMap<String, JsonValue>()
+        payload["requestId"] = JsonValue.String(rid)
+        payload["askKind"] = JsonValue.String(kind)
+        payload["prompt"] = JsonValue.String(prompt)
+        payload["options"] = JsonValue.Array(opts)
+        emit(this.ctx, this.sessionId, this.seq, "ask", JsonValue.Map(payload).stringify())
+        let deadline = nowMillisForPlugin() + this.timeoutSeconds * 1000
+        while (nowMillisForPlugin() < deadline) {
+            match (this.slot.takeAnswer()) {
+                case Some(a) => return a
+                case None => ()
+            }
+            sleep(Duration.millisecond * 10)
+        }
         return ""
+    }
+}
+
+func nowMillisForPlugin(): Int64 {
+    return DateTime.now().toUnixTimeStamp().toMilliseconds()
+}
+
+// 只做一件事：问一个问题，按答案完成。
+class AskDriver <: HarnessDriver {
+    public func base(): String { return "ask" }
+    public func baseLabel(): String { return "ask 测试驱动" }
+    public func models(): Array<Model> {
+        let m = Model()
+        m.id = "ask"
+        m.label = "ask 测试驱动"
+        m.available = true
+        m.default = Some(true)
+        return [m]
+    }
+    public func capabilities(): HarnessCapabilities {
+        return HarnessCapabilities(true, true)
+    }
+    public func run(ctx: TurnContext, sink: TurnSink, cancel: CancelToken): TurnOutcome {
+        let answer = sink.ask("permission", "允许执行 ls 吗？", [("allow", "允许"), ("deny", "拒绝")])
+        if (answer.size == 0) {
+            // 没拿到答案（超时/被取消）：如实报 incomplete，不假装选了一个
+            return TurnOutcome.Incomplete(IncompleteReason.InputRequired, None)
+        }
+        sink.textDelta("答：" + answer)
+        return TurnOutcome.Completed(None)
     }
 }

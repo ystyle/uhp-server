@@ -27,6 +27,23 @@ class TurnSinkSlot {
     public var outcome: Option<String> = None
     public let cancel = CancelToken()
     public var lastSeq: Int64 = 0
+    // 插件要提问时先落在这里：TurnSink.ask 必须由回合线程调用（它要发 input_request），
+    // 而事件是在 stderr 转发线程上收到的，所以分两步：线程登记 → 回合线程取走并上报。
+    public var askEvent: Option<AskEvent> = None
+}
+
+// 插件侧的一次提问（对应 UHP 的一个 input_request）
+class AskEvent {
+    public let requestId: String
+    public let kind: String
+    public let prompt: String
+    public let options: Array<(String, String)>
+    public init(requestId: String, kind: String, prompt: String, options: Array<(String, String)>) {
+        this.requestId = requestId
+        this.kind = kind
+        this.prompt = prompt
+        this.options = options
+    }
 }
 
 public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
@@ -38,6 +55,10 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
     private var host: Option<PluginHost> = None
     private var instance: Option<PluginInstance> = None
     private let slots: HashMap<String, TurnSinkSlot> = HashMap<String, TurnSinkSlot>()
+    // 已经上报给客户端、等下一轮答案的请求：sessionId -> 插件的 requestId
+    private let pendingAsks: HashMap<String, String> = HashMap<String, String>()
+    // 回合结果槽：插件那条 invoke 可能跨两轮（提问中断 + 答案续跑），所以槽要在驱动里存着
+    private let outcomes: HashMap<String, OutcomeBox> = HashMap<String, OutcomeBox>()
     private let timeoutSeconds: Int64
 
     public init(pluginSource: String, pluginArgs: Array<String>, base: String, label: String,
@@ -81,28 +102,78 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         synchronized(this.lock) {
             this.slots[ctx.sessionId] = slot
         }
-        // P1-b：回合的 invoke 会一直挂到回合结束（插件在自己的处理线程上跑回合 + 逐条 emit），
-        // 所以这里另起一条线程等结果，主线程负责把取消转发出去、并在超时后收口。
-        // 增量由事件订阅（onEvent）直接写进 sink，不必等 invoke 返回。
-        let outcomeBox = OutcomeBox()
-        let self = this
-        let sessionId = ctx.sessionId
-        let input = ctx.input
-        spawn {
-            let r = self.invoke(inst, "run", [JsonValue.String(sessionId), JsonValue.String(input)])
-            let status = match (r) {
-                case Some(v) => asString(v)
-                case None => "failed:harness_error:插件调用失败"
-            }
-            outcomeBox.set(status)
-            synchronized(self.lock) {
-                self.slots.remove(sessionId)
+        let outcomeBox = synchronized(this.lock) {
+            match (this.outcomes.get(ctx.sessionId)) {
+                case Some(b) => b
+                case None =>
+                    let b = OutcomeBox()
+                    this.outcomes[ctx.sessionId] = b
+                    b
             }
         }
+
+        // 这一段是「回答问题」的续跑：插件那条 run invoke 还没返回（驱动挂在 ask 上），
+        // 所以不能重新发起回合，只把答案送回去，然后接着等同一个结果槽。
+        var resumed = false
+        if (ctx.answers.size > 0) {
+            let pending = synchronized(this.lock) {
+                this.pendingAsks.remove(ctx.sessionId)
+            }
+            match (pending) {
+                case Some(reqId) =>
+                    resumed = true
+                    let _ = this.invoke(inst, "answer", [JsonValue.String(ctx.sessionId),
+                        JsonValue.String(reqId), JsonValue.String(ctx.answers[0])])
+                case None => ()
+            }
+        }
+        if (!resumed) {
+            let self = this
+            let sessionId = ctx.sessionId
+            let input = ctx.input
+            spawn {
+                let r = self.invoke(inst, "run", [JsonValue.String(sessionId), JsonValue.String(input)])
+                let status = match (r) {
+                    case Some(v) => asString(v)
+                    case None => "failed:harness_error:插件调用失败"
+                }
+                outcomeBox.set(status)
+            }
+        }
+
         let deadline = nowMillis() + this.timeoutSeconds * 1000
         while (nowMillis() < deadline) {
+            // 1) 回合结束
             match (outcomeBox.get()) {
-                case Some(status) => return decodeOutcome(status)
+                case Some(status) =>
+                    synchronized(this.lock) {
+                        this.slots.remove(ctx.sessionId)
+                        this.outcomes.remove(ctx.sessionId)
+                        this.pendingAsks.remove(ctx.sessionId)
+                    }
+                    return decodeOutcome(status)
+                case None => ()
+            }
+            // 2) 插件提问：上报成 input_request，本轮以 incomplete 收口（下一轮带答案回来）
+            // 闭包内不做类型推断兜底：显式标注局部量
+            let ask: Option<AskEvent> = synchronized(this.lock) {
+                match (this.slots.get(ctx.sessionId)) {
+                    case Some(s) =>
+                        let a = s.askEvent
+                        s.askEvent = None
+                        a
+                    case None => None
+                }
+            }
+            match (ask) {
+                case Some(a) =>
+                    // TurnSink.ask 会生成 UHP 的 input_request 并返回它的 id
+                    let requestId = sink.ask(a.kind, a.prompt, a.options)
+                    synchronized(this.lock) {
+                        this.pendingAsks[ctx.sessionId] = a.requestId
+                    }
+                    eprintln("[harness-plugin] 提问已上报 request=" + requestId + " plugin=" + a.requestId)
+                    return TurnOutcome.Incomplete(IncompleteReason.InputRequired, None)
                 case None => ()
             }
             if (cancel.isCancelled()) {
@@ -113,6 +184,7 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         }
         synchronized(this.lock) {
             this.slots.remove(ctx.sessionId)
+            this.outcomes.remove(ctx.sessionId)
         }
         let _ = this.invoke(inst, "cancel", [JsonValue.String(ctx.sessionId)])
         return TurnOutcome.Failed("harness_error", "harness 插件回合超时")
@@ -236,10 +308,58 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         if (stale) {
             return
         }
+        if (kind == "ask") {
+            // 提问不能在这里直接调 sink.ask（它要发 input_request，必须由回合线程做）：
+            // 登记到 slot，回合线程下一拍取走并上报。
+            match (this.parseAsk(text)) {
+                case Some(ev) =>
+                    synchronized(this.lock) {
+                        match (this.slots.get(sessionId)) {
+                            case Some(s) => s.askEvent = Some(ev)
+                            case None => ()
+                        }
+                    }
+                case None => eprintln("[harness-plugin] 坏 ask 载荷：" + text)
+            }
+            return
+        }
         match (sinkOpt) {
             case Some(sink) => this.dispatch(sink, sessionId, kind, text)
             case None => ()
         }
+    }
+
+    // 解析插件上报的提问载荷：{requestId, askKind, prompt, options:[{id,label}]}
+    private func parseAsk(text: String): Option<AskEvent> {
+        let v = try {
+            JsonValue.fromJson(JsonReader(ByteBuffer(text.toArray())))
+        } catch (e: Exception) {
+            return None
+        }
+        let fields = match (v) {
+            case JsonValue.Map(m) => m
+            case _ => return None
+        }
+        let rid = asString(fields.get("requestId") ?? JsonValue.Null)
+        if (rid.size == 0) {
+            return None
+        }
+        let opts = ArrayList<(String, String)>()
+        match (fields.get("options") ?? JsonValue.Null) {
+            case JsonValue.Array(arr) =>
+                for (item in arr) {
+                    match (item) {
+                        case JsonValue.Map(o) =>
+                            let id = asString(o.get("id") ?? JsonValue.Null)
+                            let label = asString(o.get("label") ?? JsonValue.Null)
+                            opts.add((id, label))
+                        case _ => ()
+                    }
+                }
+            case _ => ()
+        }
+        return Some(AskEvent(rid, asString(fields.get("askKind") ?? JsonValue.Null),
+            asString(fields.get("prompt") ?? JsonValue.Null), opts.toArray()))
     }
 
     private func dispatch(sink: TurnSink, sessionId: String, kind: String, text: String): Unit {
