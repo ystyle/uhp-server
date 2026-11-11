@@ -41,6 +41,18 @@ session_mode = "parallel"   # serial（默认）| parallel（确认 agent 支持
 timeout_seconds = 600
 permission_timeout_seconds = 600
 
+# ---- 同样的 harness，但适配器跑在独立进程里（P1 进程隔离）----
+# [[harnesses]]
+# id = "dsh-isolated"
+# name = "DSH（独立进程）"
+# kind = "acp"
+# command = "dsh"
+# args = ["--profile", "acp"]
+# cwd = "/work/ws"
+# session_mode = "parallel"
+# isolate = true                 # 适配器在插件进程里跑，崩了只丢这一路
+# plugin_path = "/app/uhp_server.plugin"   # 缺省 = host 同目录
+
 # [[harnesses]]
 # id = "pi"
 # name = "pi"

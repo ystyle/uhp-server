@@ -12,6 +12,8 @@
   各自用「适配器」接：`scripted`（自检，不接模型）/ `opencode`（opencode serve 的 HTTP API）/ `acp`（任何 ACP agent：dsh、pi-acp、opencode acp…）
 - **配置即部署清单**：一份 TOML 声明 token 与 harness，启动时严格校验（未知 kind/缺字段/重复 id 直接失败）
 - **完整 UHP 协议面**（Conformance `full`）：响应/会话/事件流/取消/文件与产物/记忆等由 SDK 提供
+- **适配器可进程隔离**（P1）：`isolate = true` 时适配器跑在独立插件进程里（cordis-cj 托管），
+  一个 harness 崩了只丢这一路；插件进程随 harness 卸载被回收
 - **单二进制**：Cangjie 运行时静态链入，镜像只需 glibc + libstdc++
 - **无模型也能自检**：`kind = "scripted"` 的 harness 让部署验证不依赖任何凭据
 
@@ -65,6 +67,7 @@ AGENT_CMD="openma-pi-acp" bash scripts/real-smoke.sh     # 换成 pi
 | `kind = "acp"` | `command` / `args` / `cwd` / `session_mode` / `timeout_seconds` / `permission_timeout_seconds` | 拉起的 ACP agent；`session_mode = serial \| parallel` |
 | `kind = "opencode"` | `base_url` / `directory` / `user` / `password` / `model_provider` / `model_id` | 连一个 `opencode serve` |
 | `kind = "scripted"` | `reply` / `delay_ms` | 自检用，按固定文本返回 |
+| 任一 kind | `isolate` / `plugin_path` | `isolate = true` 时该 harness 的适配器跑在独立插件进程里（cordis 托管）；`plugin_path` 缺省取 host 同目录的 `uhp_server.plugin` |
 
 ## 文档
 

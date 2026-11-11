@@ -69,25 +69,34 @@ UHP 规范**没有** `DELETE /v1/sessions/{id}`：会话由服务端持有、按
 
 ## 6. P1：cordis-cj 托管适配器插件
 
-目标：适配器从 host 进程内移到独立插件进程（进程隔离 / 热卸载 / 崩溃自愈），协议面与配置不变。
+目标：适配器从 host 进程内移到独立插件进程（进程隔离 / 崩溃只丢一路 / 卸载即回收），协议面与配置不变。
 
 ```text
 uhp-server（host）
 ├── Engine + UhpHttpServer
-├── cordis host（按 uhp-server.toml 的 harness 列表拉起/重启插件进程）
-└── CordisHarnessDriver（把 HarnessDriver SPI 代理到插件 RPC）
-        │ stdio/UDS JSON-RPC（cordis-cj）
+├── PluginHost（cordis_host）：拉起 / 握手 / stderr 转发 / 终止回收
+└── CordisHarnessDriver（把 HarnessDriver SPI 代理成对插件的 invoke）
+        │ stdio JSON-RPC（cordis 的 initialize/provide/invoke）
         ▼
-  harness 插件进程（内嵌 uhp-acp / uhp-opencode）
+  uhp_server.plugin 进程（插件内嵌 uhp-acp / uhp-opencode / scripted）
 ```
 
-要点：
+**已落地（P1-a）**：`isolate = true` 的 harness 走插件进程；插件暴露 `harness` 服务的
+`info` / `run` / `cancel` / `closeSession`；`close()` 经 `host.removePlugin` 终止进程。
+端到端测试：`src/plugin_test.cj`（scripted backend，不需要模型）。
 
-1. 插件暴露 `harness` 服务：`info` / `run` / `cancel` / `closeSession`；卸载 → `driver.close()`。
-2. `run` 的流式增量（text/reasoning/toolCall/diff）是**高频事件**，必须按 20–50ms 或若干 KB 批量上行，
-   不能一个 token 一次 IPC（cordis-cj 的设计目标本身是中低频控制面）。
-3. 取消：host `cancel` → 插件置 `CancelToken`；完成：`run` 的 RPC 返回 `TurnOutcome`。
-4. `Engine` 的 harness 注册表目前是构造时固定的 → P1 需要 `addHarness/removeHarness`（或插件变更时重启 host，先不做）。
+P1-a 的取舍（写清楚，别当成已完成）：
+
+| 项 | P1-a | P1-b（待做） |
+|---|---|---|
+| 回合执行 | `run` **整轮同步**，插件内缓冲增量后一次性回传 | 增量走事件上行（`events/emit` + `subscribeLocal`），宿主侧按 20–50ms 批量写 TurnSink |
+| 工具调用 | 只透出最终文本（`BufferedSink` 不转 toolCall） | tool_call / tool_result / producedFile 逐条映射 |
+| 问答（permission / elicitation） | 不支持（`capabilities` 如实报 false） | 两轮回路跨进程：插件挂起 → host 转 `input_request` → 下一轮答案回填 |
+| 启动等待 | invoke 前必须 `awaitActive`（否则插件服务表还空，invoke 回 INVOKE-ERROR） | 同 |
+| 崩溃自愈 | host 侧下一次 run 会重新拉起（`close()` 后重连） | 状态机感知 + 在跑回合明确失败 |
+
+为什么先同步：进程边界/生命周期/终态映射是本阶段的主要风险；流式与问答是纯增量改造，
+先让「隔离本身」可信，再加流式，比一次性堆两套机制更容易验证。
 
 ## 7. 与 `uhp` SDK 的待办（记在这里，别散落）
 

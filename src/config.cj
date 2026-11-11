@@ -124,6 +124,10 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
     public var password: String = ""
     public var model_provider: String = ""
     public var model_id: String = ""
+    // P1：把适配器放进独立进程（cordis 托管）。默认 false = host 进程内。
+    public var isolate: Bool = false
+    // 插件可执行文件路径；空 = 与 host 同目录的 uhp_server.plugin
+    public var plugin_path: String = ""
     // kind = scripted（不接模型的自检 harness）
     public var reply: String = "scripted reply"
     public var delay_ms: Int64 = 0
@@ -148,6 +152,8 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
             .add(field<String>("password", this.password))
             .add(field<String>("model_provider", this.model_provider))
             .add(field<String>("model_id", this.model_id))
+            .add(field<Bool>("isolate", this.isolate))
+            .add(field<String>("plugin_path", this.plugin_path))
             .add(field<String>("reply", this.reply))
             .add(field<Int64>("delay_ms", this.delay_ms))
     }
@@ -172,6 +178,8 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
         r.password = stringOr(dms, "password", r.password)
         r.model_provider = stringOr(dms, "model_provider", r.model_provider)
         r.model_id = stringOr(dms, "model_id", r.model_id)
+        r.isolate = boolOr(dms, "isolate", r.isolate)
+        r.plugin_path = stringOr(dms, "plugin_path", r.plugin_path)
         r.reply = stringOr(dms, "reply", r.reply)
         r.delay_ms = intOr(dms, "delay_ms", r.delay_ms)
         return r

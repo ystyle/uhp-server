@@ -5,9 +5,27 @@
 package uhp_server
 
 import std.collection.{ArrayList, HashMap}
+import std.env.getCommandLine
+import std.fs.Path
 import uhp.server.*
 import uhp_acp.*
 import uhp_opencode.*
+
+// 当前可执行文件所在目录（用来找同目录的插件二进制）。
+// argv[0] 可能是相对路径，所以只取目录部分，不做 realpath 猜测。
+func currentExecutableDir(): String {
+    let argv = getCommandLine()
+    let exe = if (argv.size > 0) { argv[0] } else { "" }
+    // lastIndexOf 返回 Option：没有 '/' 说明是裸文件名，没有目录可拼
+    let idx = match (exe.lastIndexOf("/")) {
+        case Some(v) => v
+        case None => -1
+    }
+    if (idx <= 0) {
+        return "."
+    }
+    return exe[0..idx]
+}
 
 func defaultBase(kind: String): String {
     return match (kind) {
@@ -48,7 +66,47 @@ public func buildHarnesses(cfg: ServerConfig): Array<ConfiguredHarness> {
     return out.toArray()
 }
 
+// 插件可执行文件：显式配了就用配的，否则取 host 同目录的 uhp_server.plugin
+func pluginBinary(h: HarnessSpec): String {
+    if (h.plugin_path.size > 0) {
+        return h.plugin_path
+    }
+    return currentExecutableDir() + "/uhp_server.plugin"
+}
+
+// 把一个 harness 规格翻译成插件进程参数（见 src/plugin/main.cj 的 parseArgs）
+func pluginArgsOf(h: HarnessSpec): Array<String> {
+    let out = ArrayList<String>()
+    out.add("--backend")
+    out.add(h.kind)
+    if (h.kind == "scripted") {
+        out.add("--reply")
+        out.add(h.reply)
+    }
+    if (h.command.size > 0) {
+        out.add("--command")
+        out.add(h.command)
+    }
+    if (h.cwd.size > 0) {
+        out.add("--cwd")
+        out.add(h.cwd)
+    }
+    out.add("--session-mode")
+    out.add(h.session_mode)
+    out.add("--timeout")
+    out.add(h.timeout_seconds.toString())
+    for (a in h.args) {
+        out.add("--arg")
+        out.add(a)
+    }
+    return out.toArray()
+}
+
 func buildDriver(h: HarnessSpec, label: String): HarnessDriver {
+    if (h.isolate) {
+        return CordisHarnessDriver(pluginBinary(h), pluginArgsOf(h), defaultBase(h.kind), label,
+            timeoutSeconds: h.timeout_seconds)
+    }
     match (h.kind) {
         case "scripted" =>
             let steps: Array<ScriptStep> = [ScriptStep.Text(h.reply)]

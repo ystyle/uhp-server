@@ -18,6 +18,16 @@
   "uhp_acp" = { path = "../uhp/uhp-acp" }
   "uhp_opencode" = { path = "../uhp/uhp-opencode" }
   "tomlcj" = "1.0.0"
+  # P1：适配器进程隔离托管。开发期 path 依赖同工作区的 cordis-cj；发布时换成中心仓版本。
+  "ystyle::cordis_core" = { path = "../cordis-cj/cordis_core" }
+  "ystyle::cordis_host" = { path = "../cordis-cj/cordis_host" }
+  "ystyle::cordis_plugin" = { path = "../cordis-cj/cordis_plugin" }
+  "ystyle::jsonrpc" = "0.7.9"
+  "jsonvalue" = "1.1.1"
+
+# harness 插件进程（P1：适配器隔离）。宿主按需拉起它，一个插件承载一个 harness。
+[package.package-configuration."uhp_server.plugin"]
+  output-type = "executable"
 
 [target.x86_64-unknown-linux-gnu.bin-dependencies]
   path-option = ["${CANGJIE_STDX_PATH}"]
