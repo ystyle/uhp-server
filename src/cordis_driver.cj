@@ -279,7 +279,14 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                 eprintln("[harness-plugin] 插件未就绪：" + msg)
                 return None
         }
-        // 事件订阅：插件的增量上报按 sessionId 分派给对应回合的 sink
+        // 握手检查：插件必须应答 harness 服务的 info 方法。
+        // 早失败比等第一个回合报错好查——「拉起了但方法不对」是个很容易看漏的状态。
+        match (this.invoke(active, "info", [])) {
+            case None =>
+                eprintln("[harness-plugin] 插件未应答 info（不是 harness 插件？）：" + this.pluginSource)
+                return None
+            case Some(_) => ()
+        }
         synchronized(this.lock) {
             // 并发首次调用时可能已经有人装好了：装好的那份为准，本次拉起的实例关掉
             match (this.instance) {

@@ -37,8 +37,9 @@ func readableFile(p: String): Bool {
 func plugin_isolation_runs_task_in_child_process(): Unit {
     let pluginBin = pluginBinPath()
     if (!readableFile(pluginBin)) {
-        // 没构建插件（只跑单测、没 cjpm build 插件目标）时跳过，不伪装通过
-        @Expect(true, true)
+        // 不静默跳过：插件二进制不存在时这条用例等于没跑，必须让人看见
+        eprintln("插件二进制缺失，先 cjpm build（或 scripts/test.sh）")
+        @Expect(false, true)
         return
     }
     let spec = HarnessSpec()

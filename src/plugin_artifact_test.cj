@@ -60,7 +60,9 @@ func isolatedSpec(kind: String, pluginBin: String): HarnessSpec {
 func plugin_carries_artifact_bytes(): Unit {
     let pluginBin = pluginBinPath()
     if (!readableFile(pluginBin)) {
-        @Expect(true, true)
+        // 不静默跳过：插件二进制不存在时这些用例等于没跑，必须让人看见
+        eprintln("插件二进制缺失，先 cjpm build（或 scripts/test.sh）")
+        @Expect(false, true)
         return
     }
     let spec = isolatedSpec("scripted", pluginBin)
@@ -90,7 +92,9 @@ func plugin_carries_artifact_bytes(): Unit {
 func plugin_crash_fails_in_flight_turn_fast(): Unit {
     let pluginBin = pluginBinPath()
     if (!readableFile(pluginBin)) {
-        @Expect(true, true)
+        // 不静默跳过：插件二进制不存在时这些用例等于没跑，必须让人看见
+        eprintln("插件二进制缺失，先 cjpm build（或 scripts/test.sh）")
+        @Expect(false, true)
         return
     }
     let cfg = ServerConfig()

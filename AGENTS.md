@@ -19,9 +19,11 @@ uhp-server/
 │   ├── config.cj         TOML 配置模型与加载
 │   ├── factory.cj        配置条目 → ConfiguredHarness（按 kind 选驱动）
 │   ├── config_test.cj    配置/工厂单测
-│   └── server_e2e_test.cj 真起 server + SDK client 的端到端
+│   ├── server_e2e_test.cj 真起 server + SDK client 的端到端
+│   ├── plugin/           harness 插件进程（P1：把内置适配器放进独立进程）
+│   └── examples/         示例插件（自己写适配器的参照实现）
 ├── config/               配置样例
-├── docs/                 设计与决策
+├── docs/                 设计（design.md）与「怎么写适配器」（writing-a-harness.md）
 ├── scripts/              build / test / smoke
 └── Dockerfile  docker-compose.yml
 ```

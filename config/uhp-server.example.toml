@@ -41,6 +41,16 @@ session_mode = "parallel"   # serial（默认）| parallel（确认 agent 支持
 timeout_seconds = 600
 permission_timeout_seconds = 600
 
+# ---- 自己写的插件（不改 uhp-server，只写配置）：docs/writing-a-harness.md ----
+# 示例插件就是本仓 src/examples/echo_plugin，构建后位于 target/release/bin/
+# [[harnesses]]
+# id = "mine"
+# name = "我自己接的 agent"
+# kind = "echo-plugin"                 # 自己起名：不是 acp/opencode/scripted 即按自写插件处理
+# isolate = true                       # 自写插件只支持独立进程模式
+# plugin_path = "/opt/uhp/plugins/echo_plugin"
+# plugin_args = ["--greeting", "你好"]  # 原样传给插件（args 是给 ACP agent 的）
+
 # ---- 同样的 harness，但适配器跑在独立进程里（P1 进程隔离）----
 # [[harnesses]]
 # id = "dsh-isolated"

@@ -113,6 +113,9 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
     // kind = acp（任何 ACP agent：dsh / pi-acp / opencode acp …）
     public var command: String = ""
     public var args: ArrayList<String> = ArrayList<String>()
+    // 自己写的插件（isolate = true 且 kind 不是内置那几种）用这个传参：宿主原样转给插件，
+    // 不像 args 那样再包一层 --arg（args 是给 ACP agent 的命令行参数）。
+    public var plugin_args: ArrayList<String> = ArrayList<String>()
     public var cwd: String = ""
     public var session_mode: String = "serial"
     public var timeout_seconds: Int64 = 600
@@ -146,6 +149,7 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
             .add(field<Bool>("enabled", this.enabled))
             .add(field<String>("command", this.command))
             .add(field<ArrayList<String>>("args", this.args))
+            .add(field<ArrayList<String>>("plugin_args", this.plugin_args))
             .add(field<String>("cwd", this.cwd))
             .add(field<String>("session_mode", this.session_mode))
             .add(field<Int64>("timeout_seconds", this.timeout_seconds))
@@ -174,6 +178,7 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
         r.enabled = boolOr(dms, "enabled", r.enabled)
         r.command = stringOr(dms, "command", r.command)
         r.args = stringsOr(dms, "args")
+        r.plugin_args = stringsOr(dms, "plugin_args")
         r.cwd = stringOr(dms, "cwd", r.cwd)
         r.session_mode = stringOr(dms, "session_mode", r.session_mode)
         r.timeout_seconds = intOr(dms, "timeout_seconds", r.timeout_seconds)

@@ -16,6 +16,8 @@
   一个 harness 崩了只丢这一路；插件进程随 harness 卸载被回收
 - **单二进制**：Cangjie 运行时静态链入，镜像只需 glibc + libstdc++
 - **无模型也能自检**：`kind = "scripted"` 的 harness 让部署验证不依赖任何凭据
+- **自己写适配器不用改本仓**：实现一个几十行的插件进程（协议见
+  [docs/writing-a-harness.md](docs/writing-a-harness.md)），写进配置就能和其它 harness 一起跑
 
 ## 快速开始
 
@@ -68,16 +70,32 @@ AGENT_CMD="openma-pi-acp" bash scripts/real-smoke.sh     # 换成 pi
 | `kind = "opencode"` | `base_url` / `directory` / `user` / `password` / `model_provider` / `model_id` | 连一个 `opencode serve` |
 | `kind = "scripted"` | `reply` / `delay_ms` | 自检用，按固定文本返回 |
 | 任一 kind | `isolate` / `plugin_path` | `isolate = true` 时该 harness 的适配器跑在独立插件进程里（cordis 托管）；`plugin_path` 缺省取 host 同目录的 `uhp_server.plugin` |
+| 任一 kind | `plugin_args` | 自写插件的参数，**原样**传给插件（`args` 是给 ACP agent 的，会被包成 `--arg`） |
+
+## 自己写适配器
+
+想接一个本仓没有的 agent，有两种做法，推荐第一种——**不用改 uhp-server 一行代码**：
+
+1. **写一个插件进程**：几十行的可执行文件，提供 `harness` 服务（`info`/`run`/`cancel`/`answer`/`closeSession`），
+   增量按约定写成 stderr 上的 `#UHP#{…}` 行；配置里 `isolate = true` + `plugin_path` 指过去即可。
+2. **写一个进程内驱动**：实现 SDK 的 `HarnessDriver`，在 `src/factory.cj` 加一个 kind（要和 host 同生共死时用）。
+
+完整流程、协议表、自查清单、常见故障对照：[**docs/writing-a-harness.md**](docs/writing-a-harness.md)。
+可运行的参照实现：[src/examples/echo_plugin/main.cj](src/examples/echo_plugin/main.cj)——它被
+`src/echo_plugin_test.cj` 端到端跑过（配置片段与文档逐字一致）。
 
 ## 文档
 
+- **自己写适配器（插件进程 / 进程内驱动）**：[docs/writing-a-harness.md](docs/writing-a-harness.md)
 - 设计（装配、进程模型、P0/P1 路线）：[docs/design.md](docs/design.md)
 - 各 harness 的 ACP 能力矩阵：[uhp-acp/docs/support.md](https://atomgit.com/ystyle/uhp/blob/master/uhp-acp/docs/support.md)
 - 协议与 SDK：[uhp](https://atomgit.com/ystyle/uhp)
 
 ## 状态
 
-P0：单进程 host（适配器在 host 进程内）+ 配置 + 单二进制 + Docker；**cordis-cj 托管适配器插件是 P1**。
+P0 已完成：单进程 host + 配置 + 单二进制 + Docker。
+P1 已完成：cordis-cj 托管适配器插件（进程隔离、跨进程流式增量、两轮问答、产物字节、崩溃感知）。
+剩增量批量化这一项性能优化，之后进发布（tag + 二进制 + 镜像）。
 
 ## 许可证
 

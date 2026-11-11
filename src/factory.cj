@@ -107,6 +107,10 @@ func pluginArgsOf(h: HarnessSpec): Array<String> {
         out.add("--arg")
         out.add(a)
     }
+    // 自写插件的参数原样传：宿主不解释它们的含义
+    for (a in h.plugin_args) {
+        out.add(a)
+    }
     return out.toArray()
 }
 

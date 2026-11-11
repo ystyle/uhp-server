@@ -29,6 +29,10 @@
 [package.package-configuration."uhp_server.plugin"]
   output-type = "executable"
 
+# 示例插件：自己写适配器的参照实现（docs/writing-a-harness.md）
+[package.package-configuration."uhp_server.examples.echo_plugin"]
+  output-type = "executable"
+
 [target.x86_64-unknown-linux-gnu.bin-dependencies]
   path-option = ["${CANGJIE_STDX_PATH}"]
 [target.aarch64-unknown-linux-gnu.bin-dependencies]

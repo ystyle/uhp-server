@@ -71,6 +71,9 @@ UHP 规范**没有** `DELETE /v1/sessions/{id}`：会话由服务端持有、按
 
 目标：适配器从 host 进程内移到独立插件进程（进程隔离 / 崩溃只丢一路 / 卸载即回收），协议面与配置不变。
 
+> 怎么**自己写一个适配器**（插件进程 / 进程内驱动）见 [writing-a-harness.md](writing-a-harness.md)；
+> 可运行的参照实现是 [src/examples/echo_plugin/main.cj](../src/examples/echo_plugin/main.cj)。
+
 ```text
 uhp-server（host）
 ├── Engine + UhpHttpServer
