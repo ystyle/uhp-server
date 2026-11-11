@@ -10,6 +10,7 @@ package uhp_server
 import std.collection.{ArrayList, HashMap}
 import std.sync.{AtomicBool, Mutex}
 import std.io.ByteBuffer
+import stdx.encoding.base64.*
 import stdx.encoding.json.stream.JsonReader
 import jsonvalue.*
 import ystyle::cordis_core.*
@@ -53,6 +54,7 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
     private let baseName: String
     private let lock = Mutex()
     private var host: Option<PluginHost> = None
+    private var manager: Option<PluginManager> = None
     private var instance: Option<PluginInstance> = None
     private let slots: HashMap<String, TurnSinkSlot> = HashMap<String, TurnSinkSlot>()
     // 已经上报给客户端、等下一轮答案的请求：sessionId -> 插件的 requestId
@@ -176,6 +178,17 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                     return TurnOutcome.Incomplete(IncompleteReason.InputRequired, None)
                 case None => ()
             }
+            // 3) 插件进程没了：在跑的回合立刻失败，不要干等超时
+            if (this.pluginExited(inst)) {
+                synchronized(this.lock) {
+                    this.slots.remove(ctx.sessionId)
+                    this.outcomes.remove(ctx.sessionId)
+                    this.instance = None
+                    this.host = None
+                    this.manager = None
+                }
+                return TurnOutcome.Failed("harness_error", "harness 插件进程已退出")
+            }
             if (cancel.isCancelled()) {
                 // 取消是另一条 invoke：插件在自己的线程池里处理，不受正在跑的回合阻塞
                 let _ = this.invoke(inst, "cancel", [JsonValue.String(ctx.sessionId)])
@@ -196,6 +209,15 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             case Some(inst) =>
                 let _ = this.invoke(inst, "closeSession", [JsonValue.String(sessionId)])
             case None => ()
+        }
+    }
+
+    // 插件进程是否已退出。退出之后 instance 里的连接都不可用了，
+    // 所以下一次 run 会重新拉起（ensurePlugin 里 instance 为 None 就再拉一个）。
+    private func pluginExited(inst: PluginInstance): Bool {
+        return match (this.manager) {
+            case Some(m) => m.isExited(inst)
+            case None => false
         }
     }
 
@@ -270,6 +292,7 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                     return Some(existing)
                 case None =>
                     this.host = Some(host)
+                    this.manager = Some(manager)
                     this.instance = Some(active)
             }
         }
@@ -362,6 +385,26 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             asString(fields.get("prompt") ?? JsonValue.Null), opts.toArray()))
     }
 
+    // 解析产物载荷：{filename, data(base64)}
+    private func parseFile(text: String): Option<(String, Array<UInt8>)> {
+        let v = try {
+            JsonValue.fromJson(JsonReader(ByteBuffer(text.toArray())))
+        } catch (e: Exception) {
+            return None
+        }
+        let fields = match (v) {
+            case JsonValue.Map(m) => m
+            case _ => return None
+        }
+        let name = asString(fields.get("filename") ?? JsonValue.Null)
+        let b64 = asString(fields.get("data") ?? JsonValue.Null)
+        let bytes = match (fromBase64String(b64)) {
+            case Some(b) => b
+            case None => return None
+        }
+        return Some((name, bytes))
+    }
+
     private func dispatch(sink: TurnSink, sessionId: String, kind: String, text: String): Unit {
         match (kind) {
             case "text" => sink.textDelta(text)
@@ -379,8 +422,10 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                 sink.toolResult(callId, out)
             case "degrade" => sink.degrade(text)
             case "file" =>
-                // 跨进程只带文件名：字节内容要先编码，留到 P1-c
-                sink.producedFile(text, [])
+                match (this.parseFile(text)) {
+                    case Some((name, bytes)) => sink.producedFile(name, bytes)
+                    case None => eprintln("[harness-plugin] 坏 file 载荷")
+                }
             case "ask_unsupported" =>
                 eprintln("[harness-plugin] 插件侧发起提问但跨进程问答未实现：" + text)
             case "outcome" =>

@@ -16,9 +16,11 @@ package uhp_server.plugin
 
 import std.collection.{ArrayList, HashMap}
 import std.convert.*
-import std.env.getCommandLine
+import std.env.{exit, getCommandLine}
 import std.sync.{AtomicBool, AtomicInt64, Mutex}
+import std.posix.*
 import std.time.DateTime
+import stdx.encoding.base64.*
 import jsonvalue.*
 import ystyle::cordis_plugin.*
 import uhp.server.*
@@ -35,6 +37,7 @@ class PluginArgs {
     public var reply: String = "plugin reply"
     public var chunks: Int64 = 1
     public var delayMs: Int64 = 0
+    public var file: String = ""
     public var command: String = ""
     public var agentArgs: Array<String> = []
     public var cwd: String = "/tmp"
@@ -67,6 +70,9 @@ func parseArgs(): PluginArgs {
         } else if (a == "--timeout" && i + 1 < argv.size) {
             i = i + 1
             p.timeoutSeconds = Int64.parse(argv[i])
+        } else if (a == "--file" && i + 1 < argv.size) {
+            i = i + 1
+            p.file = argv[i]
         } else if (a == "--chunks" && i + 1 < argv.size) {
             i = i + 1
             p.chunks = Int64.parse(argv[i])
@@ -94,7 +100,13 @@ func buildDriver(p: PluginArgs, label: String): HarnessDriver {
                 steps.add(ScriptStep.Text(p.reply))
                 n = n + 1
             }
+            if (p.file.size > 0) {
+                steps.add(ScriptStep.File(p.file, p.reply))
+            }
             return ScriptedHarness(steps.toArray(), TurnOutcome.Completed(None), delayMillis: p.delayMs)
+        case "crash" =>
+            // 测试用后端：直接让进程死掉，用来验证「在跑的回合立刻失败」而不是干等超时
+            return CrashDriver()
         case "ask" =>
             // 测试用后端：先提问，拿到答案再完成。用来验证跨进程两轮问答。
             return AskDriver()
@@ -327,9 +339,14 @@ class StreamingSink <: TurnSink {
     public func degrade(reason: String): Unit {
         emit(this.ctx, this.sessionId, this.seq, "degrade", reason)
     }
-    // 跨进程传字节要先编码（base64）；P1-b 只报文件名，内容留在 P1-c
+    // 产物跨进程：字节走 base64（JSON 行里不能放裸字节）。
+    // 大产物会让 stderr 行很长，但 stderr 是逐行转发的，不会撑坏协议通道；
+    // 真要传几十 MB 的文件，应该改成「宿主回读」而不是内联——见 design §6 的待办。
     public func producedFile(filename: String, content: Array<UInt8>): Unit {
-        emit(this.ctx, this.sessionId, this.seq, "file", filename)
+        let payload = HashMap<String, JsonValue>()
+        payload["filename"] = JsonValue.String(filename)
+        payload["data"] = JsonValue.String(toBase64String(content))
+        emit(this.ctx, this.sessionId, this.seq, "file", JsonValue.Map(payload).stringify())
     }
     // 跨进程问答：上报 ask 事件后挂起等 answer() 送答案回来。
     // 超时返回空串 = 没拿到答案（驱动按「用户未作答」处理，不该假装选了某个选项）。
@@ -390,5 +407,19 @@ class AskDriver <: HarnessDriver {
         }
         sink.textDelta("答：" + answer)
         return TurnOutcome.Completed(None)
+    }
+}
+// 让插件进程直接退出：用来验证宿主的崩溃感知。
+class CrashDriver <: HarnessDriver {
+    public func base(): String { return "crash" }
+    public func baseLabel(): String { return "crash 测试驱动" }
+    public func models(): Array<Model> { return [] }
+    public func capabilities(): HarnessCapabilities { return HarnessCapabilities(false, false) }
+    public func run(ctx: TurnContext, sink: TurnSink, cancel: CancelToken): TurnOutcome {
+        eprintln("[plugin] crash 后端主动退出")
+        // 用 SIGKILL 而不是 std.env.exit：exit 走优雅关闭，收尾要等 RPC 线程，
+        // 而崩溃感知要验的恰恰是「进程没了」这种不可收拾的情况。
+        kill(getpid(), SIGKILL)
+        return TurnOutcome.Failed("harness_error", "unreachable")
     }
 }

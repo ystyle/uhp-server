@@ -132,6 +132,8 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
     public var reply: String = "scripted reply"
     // scripted backend 的分片数与步间延迟：用来验证流式（isolate 时生效）
     public var chunks: Int64 = 1
+    // scripted backend 额外产出一个文本产物（文件名）；空 = 不产出
+    public var file: String = ""
     public var delay_ms: Int64 = 0
     public init() {}
     public func serialize(): DataModel {
@@ -158,6 +160,7 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
             .add(field<String>("plugin_path", this.plugin_path))
             .add(field<String>("reply", this.reply))
             .add(field<Int64>("chunks", this.chunks))
+            .add(field<String>("file", this.file))
             .add(field<Int64>("delay_ms", this.delay_ms))
     }
     public static func deserialize(dm: DataModel): HarnessSpec {
@@ -185,6 +188,7 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
         r.plugin_path = stringOr(dms, "plugin_path", r.plugin_path)
         r.reply = stringOr(dms, "reply", r.reply)
         r.chunks = intOr(dms, "chunks", r.chunks)
+        r.file = stringOr(dms, "file", r.file)
         r.delay_ms = intOr(dms, "delay_ms", r.delay_ms)
         return r
     }

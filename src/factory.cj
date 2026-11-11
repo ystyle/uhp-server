@@ -86,6 +86,10 @@ func pluginArgsOf(h: HarnessSpec): Array<String> {
         out.add(h.chunks.toString())
         out.add("--delay-ms")
         out.add(h.delay_ms.toString())
+        if (h.file.size > 0) {
+            out.add("--file")
+            out.add(h.file)
+        }
     }
     if (h.command.size > 0) {
         out.add("--command")
