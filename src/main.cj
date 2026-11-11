@@ -10,7 +10,7 @@ import stdx.net.http.*
 import uhp.server.*
 import uhp.types.base.*
 
-const UHP_SERVER_VERSION = "0.1.1"
+const UHP_SERVER_VERSION = "0.1.2"
 
 // 启动日志必须立刻可见：stdout 被重定向到文件/管道时（Docker、systemd、nohup）是块缓冲，
 // 不显式 flush 的话进程被 SIGKILL 时日志全丢——运维只能看到「服务没反应」。
