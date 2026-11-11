@@ -1,0 +1,50 @@
+# uhp-server 配置样例：复制成 uhp-server.toml 再改
+
+[server]
+bind = "127.0.0.1"
+port = 8488
+
+# 客户端凭证：token -> principal（建议一个客户端一个 token）
+[[tokens]]
+token = "dev-token"
+principal = "starline"
+
+# ---- harness 1：scripted（不接模型，用来验证部署/协议是否通）----
+[[harnesses]]
+id = "echo"
+name = "echo（自检用）"
+kind = "scripted"
+default_model = "auto"
+reply = "hello from uhp-server"
+
+# ---- harness 2：opencode（opencode serve 的 HTTP API）----
+[[harnesses]]
+id = "opencode"
+name = "opencode"
+kind = "opencode"
+default_model = "auto"
+base_url = "http://127.0.0.1:4776"
+directory = "/work/ws"
+user = "opencode"
+password = ""
+
+# ---- harness 3：dsh / pi（任何 ACP agent；pi 需要 pi-acp 这类适配器）----
+[[harnesses]]
+id = "dsh"
+name = "DSH"
+kind = "acp"
+default_model = "auto"
+command = "dsh"
+args = ["--profile", "acp"]
+cwd = "/work/ws"
+session_mode = "parallel"   # serial（默认）| parallel（确认 agent 支持并发回合再用）
+timeout_seconds = 600
+permission_timeout_seconds = 600
+
+# [[harnesses]]
+# id = "pi"
+# name = "pi"
+# kind = "acp"
+# command = "openma-pi-acp"   # pi 没有原生 ACP，需要 ACP 适配器
+# cwd = "/work/ws"
+# session_mode = "serial"

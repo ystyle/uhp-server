@@ -1,0 +1,229 @@
+// 配置模型与加载：TOML（tomlcj + stdx.serialization），与手工拼 JSON 无关。
+//
+// 配置即部署清单：一个 [[tokens]] 一条客户端凭证，一个 [[harnesses]] 一个 harness。
+// 解析严格在启动时完成：字段缺失/取值非法一律 fail fast，不带病运行。
+package uhp_server
+
+import std.collection.{ArrayList, HashMap}
+import std.fs.{File, OpenMode}
+import std.io.ByteBuffer
+import stdx.serialization.serialization.*
+import tomlcj.*
+
+public class ServerConfigError <: Exception {
+    public init(msg: String) {
+        super(msg)
+    }
+}
+
+// ---------- 小工具：DataModel 的宽容读取 ----------
+
+func asStruct(dm: DataModel, what: String): DataModelStruct {
+    match (dm) {
+        case s: DataModelStruct => return s
+        case _ => throw ServerConfigError(what + "：期望 table")
+    }
+}
+
+func stringOr(dms: DataModelStruct, key: String, dflt: String): String {
+    return match (dms.get(key)) {
+        case v: DataModelString => v.getValue()
+        case _ => dflt
+    }
+}
+
+func intOr(dms: DataModelStruct, key: String, dflt: Int64): Int64 {
+    return match (dms.get(key)) {
+        case v: DataModelInt => v.getValue()
+        case _ => dflt
+    }
+}
+
+func boolOr(dms: DataModelStruct, key: String, dflt: Bool): Bool {
+    return match (dms.get(key)) {
+        case v: DataModelBool => v.getValue()
+        case _ => dflt
+    }
+}
+
+func stringsOr(dms: DataModelStruct, key: String): ArrayList<String> {
+    let out = ArrayList<String>()
+    match (dms.get(key)) {
+        case seq: DataModelSeq =>
+            for (item in seq.getItems()) {
+                match (item) {
+                    case s: DataModelString => out.add(s.getValue())
+                    case _ => ()
+                }
+            }
+        case _ => ()
+    }
+    return out
+}
+
+public class ServerSection <: Serializable<ServerSection> {
+    public var bind: String = "127.0.0.1"
+    public var port: Int64 = 8488
+    public init() {}
+    public func serialize(): DataModel {
+        return DataModelStruct()
+            .add(field<String>("bind", this.bind))
+            .add(field<Int64>("port", this.port))
+    }
+    public static func deserialize(dm: DataModel): ServerSection {
+        let dms = asStruct(dm, "server")
+        let r = ServerSection()
+        r.bind = stringOr(dms, "bind", r.bind)
+        r.port = intOr(dms, "port", r.port)
+        return r
+    }
+}
+
+public class TokenEntry <: Serializable<TokenEntry> {
+    public var token: String = ""
+    public var principal: String = ""
+    public init() {}
+    public func serialize(): DataModel {
+        return DataModelStruct()
+            .add(field<String>("token", this.token))
+            .add(field<String>("principal", this.principal))
+    }
+    public static func deserialize(dm: DataModel): TokenEntry {
+        let dms = asStruct(dm, "tokens")
+        let r = TokenEntry()
+        r.token = stringOr(dms, "token", "")
+        r.principal = stringOr(dms, "principal", "")
+        return r
+    }
+}
+
+// 一个 harness 的声明。字段按 kind 取用，未用的字段保持缺省。
+public class HarnessSpec <: Serializable<HarnessSpec> {
+    public var id: String = ""
+    public var name: String = ""
+    public var base: String = ""
+    public var kind: String = ""
+    public var default_model: String = "auto"
+    public var enabled: Bool = true
+    // kind = acp（任何 ACP agent：dsh / pi-acp / opencode acp …）
+    public var command: String = ""
+    public var args: ArrayList<String> = ArrayList<String>()
+    public var cwd: String = ""
+    public var session_mode: String = "serial"
+    public var timeout_seconds: Int64 = 600
+    public var permission_timeout_seconds: Int64 = 600
+    // kind = opencode（opencode serve 的 HTTP API）
+    public var base_url: String = ""
+    public var directory: String = ""
+    public var user: String = "opencode"
+    public var password: String = ""
+    public var model_provider: String = ""
+    public var model_id: String = ""
+    // kind = scripted（不接模型的自检 harness）
+    public var reply: String = "scripted reply"
+    public var delay_ms: Int64 = 0
+    public init() {}
+    public func serialize(): DataModel {
+        return DataModelStruct()
+            .add(field<String>("id", this.id))
+            .add(field<String>("name", this.name))
+            .add(field<String>("base", this.base))
+            .add(field<String>("kind", this.kind))
+            .add(field<String>("default_model", this.default_model))
+            .add(field<Bool>("enabled", this.enabled))
+            .add(field<String>("command", this.command))
+            .add(field<ArrayList<String>>("args", this.args))
+            .add(field<String>("cwd", this.cwd))
+            .add(field<String>("session_mode", this.session_mode))
+            .add(field<Int64>("timeout_seconds", this.timeout_seconds))
+            .add(field<Int64>("permission_timeout_seconds", this.permission_timeout_seconds))
+            .add(field<String>("base_url", this.base_url))
+            .add(field<String>("directory", this.directory))
+            .add(field<String>("user", this.user))
+            .add(field<String>("password", this.password))
+            .add(field<String>("model_provider", this.model_provider))
+            .add(field<String>("model_id", this.model_id))
+            .add(field<String>("reply", this.reply))
+            .add(field<Int64>("delay_ms", this.delay_ms))
+    }
+    public static func deserialize(dm: DataModel): HarnessSpec {
+        let dms = asStruct(dm, "harnesses")
+        let r = HarnessSpec()
+        r.id = stringOr(dms, "id", r.id)
+        r.name = stringOr(dms, "name", r.name)
+        r.base = stringOr(dms, "base", r.base)
+        r.kind = stringOr(dms, "kind", r.kind)
+        r.default_model = stringOr(dms, "default_model", r.default_model)
+        r.enabled = boolOr(dms, "enabled", r.enabled)
+        r.command = stringOr(dms, "command", r.command)
+        r.args = stringsOr(dms, "args")
+        r.cwd = stringOr(dms, "cwd", r.cwd)
+        r.session_mode = stringOr(dms, "session_mode", r.session_mode)
+        r.timeout_seconds = intOr(dms, "timeout_seconds", r.timeout_seconds)
+        r.permission_timeout_seconds = intOr(dms, "permission_timeout_seconds", r.permission_timeout_seconds)
+        r.base_url = stringOr(dms, "base_url", r.base_url)
+        r.directory = stringOr(dms, "directory", r.directory)
+        r.user = stringOr(dms, "user", r.user)
+        r.password = stringOr(dms, "password", r.password)
+        r.model_provider = stringOr(dms, "model_provider", r.model_provider)
+        r.model_id = stringOr(dms, "model_id", r.model_id)
+        r.reply = stringOr(dms, "reply", r.reply)
+        r.delay_ms = intOr(dms, "delay_ms", r.delay_ms)
+        return r
+    }
+}
+
+public class ServerConfig <: Serializable<ServerConfig> {
+    public var server: ServerSection = ServerSection()
+    public var tokens: ArrayList<TokenEntry> = ArrayList<TokenEntry>()
+    public var harnesses: ArrayList<HarnessSpec> = ArrayList<HarnessSpec>()
+    public init() {}
+    public func serialize(): DataModel {
+        let tokensDm = ArrayList<DataModel>()
+        for (t in this.tokens) { tokensDm.add(t.serialize()) }
+        let harnessesDm = ArrayList<DataModel>()
+        for (h in this.harnesses) { harnessesDm.add(h.serialize()) }
+        return DataModelStruct()
+            .add(Field("server", this.server.serialize()))
+            .add(Field("tokens", DataModelSeq(tokensDm)))
+            .add(Field("harnesses", DataModelSeq(harnessesDm)))
+    }
+    public static func deserialize(dm: DataModel): ServerConfig {
+        let dms = asStruct(dm, "root")
+        let r = ServerConfig()
+        r.server = match (dms.get("server")) {
+            case s: DataModelStruct => ServerSection.deserialize(s)
+            case _ => ServerSection()
+        }
+        r.tokens = ArrayList<TokenEntry>()
+        match (dms.get("tokens")) {
+            case seq: DataModelSeq =>
+                for (item in seq.getItems()) { r.tokens.add(TokenEntry.deserialize(item)) }
+            case _ => ()
+        }
+        r.harnesses = ArrayList<HarnessSpec>()
+        match (dms.get("harnesses")) {
+            case seq: DataModelSeq =>
+                for (item in seq.getItems()) { r.harnesses.add(HarnessSpec.deserialize(item)) }
+            case _ => ()
+        }
+        return r
+    }
+}
+
+public func loadConfig(path: String): ServerConfig {
+    let file = try {
+        File(path, OpenMode.Read)
+    } catch (e: Exception) {
+        throw ServerConfigError("读不到配置文件：" + path)
+    }
+    let decoder = Decoder(file)
+    let dm = DataModel.fromToml(decoder.decode())
+    return ServerConfig.deserialize(dm)
+}
+
+public func parseConfig(content: String): ServerConfig {
+    let decoder = Decoder(ByteBuffer(content.toArray()))
+    let dm = DataModel.fromToml(decoder.decode())
+    return ServerConfig.deserialize(dm)
+}

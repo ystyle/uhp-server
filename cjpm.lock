@@ -1,0 +1,9 @@
+version = 0
+
+[requires]
+  acp = {version = "0.2.7"}
+  tomlcj = {version = "1.0.0"}
+  "ystyle::jsonrpc" = {version = "0.7.9"}
+  jsonvalue = {version = "1.1.1"}
+  gjson = {version = "1.2.2"}
+  sonyflake = {version = "1.0.9"}

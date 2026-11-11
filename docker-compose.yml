@@ -1,0 +1,21 @@
+# uhp-server：一键起（配置从 ./config/uhp-server.toml 挂进来）
+#
+#   cp config/uhp-server.example.toml config/uhp-server.toml   # 按需改
+#   bash scripts/build.sh && docker compose up -d --build
+services:
+  uhp-server:
+    build:
+      context: .
+    image: uhp-server:0.1.0
+    container_name: uhp-server
+    restart: unless-stopped
+    ports:
+      - "8488:8488"
+    volumes:
+      - ./config/uhp-server.toml:/app/uhp-server.toml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8488/v1/uhp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

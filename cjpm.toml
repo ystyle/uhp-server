@@ -1,0 +1,29 @@
+[package]
+  cjc-version = "1.2.0"
+  name = "uhp_server"
+  version = "0.1.0"
+  description = "UHP Server：把多个 harness（opencode / dsh / pi …）统一成一个 UHP 端点"
+  output-type = "executable"
+  compile-option = "-Woff unused --static"
+  link-option = "-lstdx.crypto.digest"
+  license = ["MulanPSL-2.0"]
+  authors = ["ystyle"]
+  repository = "https://atomgit.com/ystyle/uhp-server"
+  include = ["/src", "/LICENSE"]
+  exclude = ["/docs", "/config", "/scripts", "/docker", "/.github", "/target", "/src/**/*_test.cj"]
+
+[dependencies]
+  # 开发期用同工作区的 path 依赖；对外构建时切成中心仓版本（见 docs/design.md「发布」）
+  "uhp" = { path = "../uhp/uhp" }
+  "uhp_acp" = { path = "../uhp/uhp-acp" }
+  "uhp_opencode" = { path = "../uhp/uhp-opencode" }
+  "tomlcj" = "1.0.0"
+
+[target.x86_64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.aarch64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.x86_64-apple-darwin.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.aarch64-apple-darwin.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]

@@ -1,0 +1,4 @@
+/target
+*.cjp
+uhp-server.toml
+!.gitignore
