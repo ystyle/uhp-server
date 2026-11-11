@@ -27,11 +27,6 @@ ARG UHP_PLUGIN_BIN=dist/uhp_server.plugin
 COPY ${UHP_PLUGIN_BIN} /app/uhp_server.plugin
 RUN chmod 0755 /app/uhp_server.plugin
 
-# 入口脚本：容器里 PID 1 会忽略没处理器的信号，必须由它把 SIGTERM 转给 uhp_server
-# （否则 docker stop 每次等满 10s 宽限后被 SIGKILL）。见 docker/entrypoint.sh。
-COPY docker/entrypoint.sh /app/entrypoint.sh
-RUN chmod 0755 /app/entrypoint.sh
-
 # 配置默认放 /app/uhp-server.toml（compose 里挂卷覆盖）
 COPY config/uhp-server.example.toml /app/uhp-server.toml
 
@@ -46,5 +41,7 @@ STOPSIGNAL SIGTERM
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8488/v1/uhp || exit 1
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+# 主程序自己注册了 SIGTERM/SIGINT 处理器（std.runtime.registerSignalHandler），
+# 所以即使它是容器里的 PID 1，信号也会被投递并走优雅收尾（停服务 → 回收 driver → exit 0）。
+ENTRYPOINT ["/app/uhp_server"]
 CMD ["--config", "/app/uhp-server.toml"]

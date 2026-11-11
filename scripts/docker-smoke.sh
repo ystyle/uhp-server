@@ -76,14 +76,22 @@ check "inline ok" "$(ask inline)"
 echo "--- 插件进程 harness（isolate = true）"
 check "plugin ok" "$(ask isolated)"
 
-# 停止必须快：镜像里用 tini 当 PID 1 转发 SIGTERM（否则 PID 1 会忽略信号，每次等满 10s 宽限）
+# 停止必须是「优雅且快」：主程序注册了信号处理器，SIGTERM → 停服务 → 回收 driver → exit 0。
+# 若处理器没了，容器里 PID 1 会忽略 SIGTERM，等满宽限后被 SIGKILL（exit 137）。
 start=$(date +%s%N)
 docker stop "$NAME" >/dev/null
 end=$(date +%s%N)
 stop_ms=$(( (end - start) / 1000000 ))
-echo "--- 停止耗时：${stop_ms}ms（退出码 $(docker inspect -f '{{.State.ExitCode}}' "$NAME")）"
+exit_code=$(docker inspect -f '{{.State.ExitCode}}' "$NAME")
+echo "--- 停止耗时：${stop_ms}ms，退出码：${exit_code}"
 if [ "$stop_ms" -gt 5000 ]; then
-  echo "停止太慢（${stop_ms}ms）：SIGTERM 没被处理，检查镜像里是不是用 tini 当 PID 1" >&2
+  echo "停止太慢（${stop_ms}ms）：SIGTERM 没被处理（信号处理器丢了？）" >&2
+  docker logs "$NAME" 2>&1 | tail -5 >&2
   exit 4
+fi
+if [ "$exit_code" != "0" ]; then
+  echo "退出码 ${exit_code}（期望 0）：没有走优雅收尾" >&2
+  docker logs "$NAME" 2>&1 | tail -5 >&2
+  exit 5
 fi
 echo "==> docker smoke ok（$IMAGE）"

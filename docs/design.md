@@ -56,9 +56,11 @@ UHP 规范**没有** `DELETE /v1/sessions/{id}`：会话由服务端持有、按
 - **会话 TTL 驱逐**（`session_ttl_seconds`，默认关）：后台线程按 `min(ttl, 30s)` 的间隔调
   `Engine.reapIdleSessions`，收掉空闲且没有回合在跑的会话，并触发 driver 的 `closeSession()`。
   这是长跑部署必须开的一项——否则会话记录与 agent 侧上下文只增不减。
-- 退出：`serve()` 返回后调 `Engine.close()` 收子进程/连接。Cangjie 没有信号注册接口，
-  SIGTERM 会直接结束进程；此时靠「父进程退出 → 子进程 stdin EOF → agent 自行退出」兜底
-  （dsh / pi-acp / opencode acp 实测都会）。
+- 退出：`src/shutdown.cj` 用 `std.runtime.registerSignalHandler` 注册 SIGTERM/SIGINT，
+  处理器只置位（信号上下文不能阻塞），后台线程做收尾：停 HTTP（`serve()` 返回）→ `Engine.close()`
+  （关 agent 子进程/插件进程）→ main 自然退出 `exit 0`。`std.env.atExit` 作为正常退出路径的兜底。
+  **必须有处理器**：容器里 PID 1 对没有处理器的信号一律忽略，实测没有它时 `docker stop` 要等满
+  10s 宽限后被 SIGKILL（exit 137）；有了它 0.2s、exit 0。
 
 ## 5. 鉴权与网络
 

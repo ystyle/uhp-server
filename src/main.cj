@@ -5,12 +5,12 @@
 package uhp_server
 
 import std.collection.{ArrayList, HashMap}
-import std.env.{getCommandLine, getStdOut}
+import std.env.{atExit, getCommandLine, getStdOut}
 import stdx.net.http.*
 import uhp.server.*
 import uhp.types.base.*
 
-const UHP_SERVER_VERSION = "0.1.0"
+const UHP_SERVER_VERSION = "0.1.1"
 
 // 启动日志必须立刻可见：stdout 被重定向到文件/管道时（Docker、systemd、nohup）是块缓冲，
 // 不显式 flush 的话进程被 SIGKILL 时日志全丢——运维只能看到「服务没反应」。
@@ -105,6 +105,21 @@ main(): Int64 {
         info("  会话 TTL：" + cfg.server.session_ttl_seconds.toString() + " 秒（空闲即回收）")
     }
     startSessionReaper(engine, cfg.server.session_ttl_seconds)
+    // 优雅退出：SIGTERM / SIGINT → 停 HTTP（serve 返回）→ 回收 driver（关 agent 子进程/插件进程）
+    // 没有这个处理器时，容器里 PID 1 会忽略 SIGTERM（docker stop 每次等满 10s 宽限后被 SIGKILL）
+    // 正常退出路径（serve() 返回 / 别处调 exit）兜底回收；信号路径走下面的优雅收尾。
+    // engine.close() 幂等，重复调用无害。
+    atExit({ => engine.close() })
+    let _shutdown = installGracefulShutdown({ =>
+        info("收到退出信号，开始收尾…")
+        try {
+            server.close()
+        } catch (e: Exception) {
+            ()
+        }
+        engine.close()
+        info("收尾完成")
+    })
     server.serve()
     // serve() 正常返回 = 服务已经关了：把 driver 持有的子进程/连接一起收掉。
     // 注意：Cangjie 没有信号注册接口，SIGTERM 会直接结束进程；此时靠 ACP agent 的 stdin

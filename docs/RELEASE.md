@@ -59,10 +59,22 @@ docker run --rm -p 8488:8488 -v "$PWD/uhp-server.toml:/app/uhp-server.toml:ro" \
 > 现在依赖是 path 依赖（CI 里并行 checkout 兄弟仓）。等 `uhp` 与 cordis-cj 有可依赖的发布版本后，
 > 把 `cjpm.toml` 切成中心仓精确版本，这张表就变成真正的版本约束。
 
-## 镜像里的两个坑（已处理，别改回去）
+## 优雅退出（改之前先读）
 
-1. **PID 1 忽略信号**：容器里 PID 1 对没有显式处理器的信号一律忽略，直接让 `uhp_server` 当 PID 1
-   会导致 `docker stop` 每次等满 10s 宽限后被 SIGKILL（实测 10.2s / exit 137）。
-   故镜像用 `docker/entrypoint.sh` 当 PID 1 转发 SIGTERM（实测 0.2s / exit 143）。
-2. **构建上下文**：`target/` 几百 MB，不能进镜像上下文。`scripts/make-dist.sh` 只产出 `dist/`，
-   `.dockerignore` 也只放行 `dist/ config/ docker/`。
+主程序自己注册了信号处理器（`src/shutdown.cj`，用 `std.runtime.registerSignalHandler`）：
+
+```text
+SIGTERM / SIGINT → 处理器只无锁置位并返回 true（阻止默认终止）
+                 → 后台线程收尾：停 HTTP（serve() 返回）→ Engine.close()（关 agent 子进程/插件进程）
+                 → main 自然返回，进程 exit 0
+```
+
+**为什么必须有它**：容器里 PID 1 的内核语义是「没有处理器的信号一律忽略」。没有处理器时
+`docker stop` 的 SIGTERM 被无视，每次都要等满 10s 宽限后被 SIGKILL（实测 10.2s / exit 137）。
+有了处理器后实测停止耗时 **0.2s、退出码 0**（`scripts/docker-smoke.sh` 断言这两点）。
+`std.env.atExit` 只在正常退出路径生效，信号路径指望不上——两者都要有。
+
+## 构建上下文
+
+`target/` 几百 MB，不能进镜像上下文。`scripts/make-dist.sh` 只产出 `dist/`，
+`.dockerignore` 也只放行 `dist/ config/`。
