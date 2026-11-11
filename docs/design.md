@@ -87,11 +87,16 @@ uhp-server（host）
 
 ## 7. 与 `uhp` SDK 的待办（记在这里，别散落）
 
-| 项 | 为什么 | 归属 |
+| 项 | 状态 | 落地内容 |
 |---|---|---|
-| 可选生命周期接口 `close()/closeSession()` | server 长跑要回收 harness 会话；现在 SPI 没有生命周期钩子 | `uhp` SDK |
-| 动态 harness 注册 | P1 插件装卸需要 | `uhp` SDK |
-| 客户端补齐 sessions/files/input_response | starline 侧接入需要（`uhp.client`） | `uhp` SDK |
+| 可选生命周期接口 `close()/closeSession()` | ✅ 已进 SDK（`44eaf6a`） | `HarnessLifecycle`：`close()` / `closeSession(sessionId)`；Engine 只对实现了的 driver 调用 |
+| 动态 harness 注册 | ✅ 已进 SDK | `Engine.addHarness` / `removeHarness`（有会话绑定则拒绝）+ `releaseSession` / `close` |
+| 客户端补齐 sessions/files/input_response | ✅ 已进 SDK | `sessions` / `getSession` / `sessionTurns` / `sessionFiles` / `downloadFile`（字节）/ `answerInput` / `answerInputStream` |
+
+本仓的后续接入（P2）：
+- 会话 TTL 驱逐时调 `Engine.releaseSession`（现在按需手动）；
+- 退出路径调 `Engine.close()`。当前没有信号处理，靠「父进程退出 → 子进程 stdin EOF → agent 自行退出」兜底，
+  接 signal 之后再补。
 
 ## 8. 发布
 
@@ -102,4 +107,4 @@ uhp-server（host）
 
 | uhp-server | uhp | uhp-acp / uhp-opencode | 备注 |
 |---|---|---|---|
-| 0.1.x（开发） | path（≥ close/sessionMode 提交） | path | 需要 `uhp` 0.1.1（待发布） |
+| 0.1.x（开发） | path @ `44eaf6a` | path | 需要 `uhp` 0.1.1（含生命周期/动态 harness/客户端补齐，待发布） |
