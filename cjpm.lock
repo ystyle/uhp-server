@@ -1,11 +1,11 @@
 version = 0
 
 [requires]
-  gjson = {version = "1.2.2"}
-  acp = {version = "0.2.7"}
+  tomlcj = {version = "1.0.0"}
+  "ystyle::jsonrpc_unix" = {version = "0.7.9"}
   "ystyle::jsonrpc_stdio" = {version = "0.7.9"}
   sonyflake = {version = "1.0.9"}
-  tomlcj = {version = "1.0.0"}
   "ystyle::jsonrpc" = {version = "0.7.9"}
-  "ystyle::jsonrpc_unix" = {version = "0.7.9"}
+  acp = {version = "0.2.7"}
+  gjson = {version = "1.2.2"}
   jsonvalue = {version = "1.1.1"}

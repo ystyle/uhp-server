@@ -6,6 +6,9 @@ port = 8488
 # 增量批量窗口（毫秒）：插件进程的上报先攒 25ms 再合并成批交给 UHP 的事件通道；
 # 0 = 每条都立即转发（想看原始粒度时用）
 event_batch_ms = 25
+# harness 插件进程的通信方式：stdio（默认，逐行 JSON）| uds（unix socket + Content-Length 帧）。
+# 两者都支持；uds 少一层逐行 framing，容器里需要 /tmp 可写。
+plugin_transport = "stdio"
 # 空闲会话存活秒数：0 = 不回收。长跑部署建议开（如 1800）
 session_ttl_seconds = 0
 

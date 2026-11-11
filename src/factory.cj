@@ -57,7 +57,12 @@ public func buildHarnesses(cfg: ServerConfig): Array<ConfiguredHarness> {
         let label = if (h.name.size > 0) { h.name } else { h.id }
         let base = if (h.base.size > 0) { h.base } else { defaultBase(h.kind) }
         let model = if (h.default_model.size > 0) { h.default_model } else { "auto" }
-        let driver = buildDriver(h, label, cfg.server.event_batch_ms)
+        let transport = match (cfg.server.plugin_transport) {
+            case "stdio" => "stdio"
+            case "uds" => "uds"
+            case other => throw ServerConfigError("[server] plugin_transport 只能是 stdio / uds，实际 " + other)
+        }
+        let driver = buildDriver(h, label, cfg.server.event_batch_ms, transport)
         out.add(ConfiguredHarness(h.id, label, base, model, driver))
     }
     if (out.size == 0) {
@@ -89,6 +94,8 @@ func pluginArgsOf(h: HarnessSpec): Array<String> {
         if (h.file.size > 0) {
             out.add("--file")
             out.add(h.file)
+            out.add("--file-size")
+            out.add(h.file_size.toString())
         }
     }
     if (h.command.size > 0) {
@@ -114,10 +121,10 @@ func pluginArgsOf(h: HarnessSpec): Array<String> {
     return out.toArray()
 }
 
-func buildDriver(h: HarnessSpec, label: String, batchMs: Int64): HarnessDriver {
+func buildDriver(h: HarnessSpec, label: String, batchMs: Int64, transport: String): HarnessDriver {
     if (h.isolate) {
         return CordisHarnessDriver(pluginBinary(h), pluginArgsOf(h), defaultBase(h.kind), label,
-            timeoutSeconds: h.timeout_seconds, batchMs: batchMs)
+            timeoutSeconds: h.timeout_seconds, batchMs: batchMs, transport: transport)
     }
     match (h.kind) {
         case "scripted" =>

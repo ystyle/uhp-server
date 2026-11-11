@@ -104,6 +104,20 @@ uhp-server（host）
 首帧之后插件连接就被打断（接收/写路径不是线程无关的）。stderr 由宿主逐行转发，
 天然串行、不占协议通道，控制面（invoke）与数据面（增量）也顺带分开了。
 
+**传输方式**（`[server] plugin_transport`，两种都实测过）：
+
+| 值 | 机制 | 说明 |
+|---|---|---|
+| `stdio`（默认） | 管道 + 逐行 JSON 帧 | 不依赖文件系统，容器里最省事 |
+| `uds` | unix socket + Content-Length 帧 | 宿主 listen、插件连；路径有 ~108 字节上限，故用短名 `/tmp/uhp-h-<ms>.sock`，退出时删除 |
+
+**就绪判据不能只看「有回包」**：cordis 的插件启动顺序是「先 provide 再跑 handler」，
+宿主 `awaitActive` 通过时插件的 `ctx.registerHandler` 可能还没执行——此时 invoke 会被回成
+`INVOKE-ERROR: service 'harness' not provided by this plugin`（实测偶发，表现为回合随机失败）。
+而且 cordis 会把插件侧异常包成字符串回包，所以「拿到回包」≠「服务可用」。
+故 `ensurePlugin` 之后轮询 `info` 直到返回**带 base 字段的对象**（最多 10s），
+`decodeOutcome` 也把 `INVOKE-ERROR:` 前缀单独映射成失败原因。
+
 跨进程问答（P1-c 已完成）：
 
 ```text

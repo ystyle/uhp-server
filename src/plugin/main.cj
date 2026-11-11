@@ -38,6 +38,7 @@ class PluginArgs {
     public var chunks: Int64 = 1
     public var delayMs: Int64 = 0
     public var file: String = ""
+    public var fileSize: Int64 = 0
     public var command: String = ""
     public var agentArgs: Array<String> = []
     public var cwd: String = "/tmp"
@@ -73,6 +74,9 @@ func parseArgs(): PluginArgs {
         } else if (a == "--file" && i + 1 < argv.size) {
             i = i + 1
             p.file = argv[i]
+        } else if (a == "--file-size" && i + 1 < argv.size) {
+            i = i + 1
+            p.fileSize = Int64.parse(argv[i])
         } else if (a == "--chunks" && i + 1 < argv.size) {
             i = i + 1
             p.chunks = Int64.parse(argv[i])
@@ -101,7 +105,18 @@ func buildDriver(p: PluginArgs, label: String): HarnessDriver {
                 n = n + 1
             }
             if (p.file.size > 0) {
-                steps.add(ScriptStep.File(p.file, p.reply))
+                // --file-size：先生成指定字节数的内容（压传输层用），否则用 reply 当内容
+                var content = p.reply
+                if (p.fileSize > 0) {
+                    let buf = ArrayList<UInt8>()
+                    var k: Int64 = 0
+                    while (k < p.fileSize) {
+                        buf.add(UInt8(97))   // 'a'
+                        k = k + 1
+                    }
+                    content = String.fromUtf8(buf.toArray())
+                }
+                steps.add(ScriptStep.File(p.file, content))
             }
             return ScriptedHarness(steps.toArray(), TurnOutcome.Completed(None), delayMillis: p.delayMs)
         case "crash" =>

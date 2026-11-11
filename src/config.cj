@@ -64,6 +64,9 @@ func stringsOr(dms: DataModelStruct, key: String): ArrayList<String> {
 public class ServerSection <: Serializable<ServerSection> {
     public var bind: String = "127.0.0.1"
     public var port: Int64 = 8488
+    // harness 插件进程的通信方式：stdio（默认，逐行 JSON）| uds（Unix socket + Content-Length 帧）。
+    // UDS 少了逐行 framing 与管道缓冲，控制面大负载更稳；stdio 不依赖文件系统权限，容器里更省事。
+    public var plugin_transport: String = "stdio"
     // 增量批量窗口（毫秒）：插件进程上报的 text/reasoning/tool_args 片段先攒再成批交给 UHP 的事件通道。
     // 0 = 关闭（每条都立即转发）。默认 25ms：保留「渐进」观感，又把 sink 调用次数降一个量级。
     public var event_batch_ms: Int64 = 25
@@ -75,6 +78,7 @@ public class ServerSection <: Serializable<ServerSection> {
         return DataModelStruct()
             .add(field<String>("bind", this.bind))
             .add(field<Int64>("port", this.port))
+            .add(field<String>("plugin_transport", this.plugin_transport))
             .add(field<Int64>("event_batch_ms", this.event_batch_ms))
             .add(field<Int64>("session_ttl_seconds", this.session_ttl_seconds))
     }
@@ -83,6 +87,7 @@ public class ServerSection <: Serializable<ServerSection> {
         let r = ServerSection()
         r.bind = stringOr(dms, "bind", r.bind)
         r.port = intOr(dms, "port", r.port)
+        r.plugin_transport = stringOr(dms, "plugin_transport", r.plugin_transport)
         r.event_batch_ms = intOr(dms, "event_batch_ms", r.event_batch_ms)
         r.session_ttl_seconds = intOr(dms, "session_ttl_seconds", r.session_ttl_seconds)
         return r
@@ -142,6 +147,8 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
     public var chunks: Int64 = 1
     // scripted backend 额外产出一个文本产物（文件名）；空 = 不产出
     public var file: String = ""
+    // 产物内容字节数（> 0 时生成等长内容，用来压传输层）
+    public var file_size: Int64 = 0
     public var delay_ms: Int64 = 0
     public init() {}
     public func serialize(): DataModel {
@@ -170,6 +177,7 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
             .add(field<String>("reply", this.reply))
             .add(field<Int64>("chunks", this.chunks))
             .add(field<String>("file", this.file))
+            .add(field<Int64>("file_size", this.file_size))
             .add(field<Int64>("delay_ms", this.delay_ms))
     }
     public static func deserialize(dm: DataModel): HarnessSpec {
@@ -199,6 +207,7 @@ public class HarnessSpec <: Serializable<HarnessSpec> {
         r.reply = stringOr(dms, "reply", r.reply)
         r.chunks = intOr(dms, "chunks", r.chunks)
         r.file = stringOr(dms, "file", r.file)
+        r.file_size = intOr(dms, "file_size", r.file_size)
         r.delay_ms = intOr(dms, "delay_ms", r.delay_ms)
         return r
     }

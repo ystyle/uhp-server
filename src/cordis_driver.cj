@@ -8,6 +8,7 @@
 package uhp_server
 
 import std.collection.{ArrayList, HashMap}
+import std.fs.{Path, removeIfExists}
 import std.sync.{AtomicBool, Mutex}
 import std.io.ByteBuffer
 import stdx.encoding.base64.*
@@ -88,15 +89,19 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
     // 批量窗口（毫秒）：<= 0 表示关闭，每条都立即转发
     private let batchMs: Int64
     private var flusherOn: Bool = false
+    // 插件通信方式：stdio（默认）| uds
+    private let transport: String
+    private var udsSocket: String = ""
 
     public init(pluginSource: String, pluginArgs: Array<String>, base: String, label: String,
-                timeoutSeconds!: Int64 = 600, batchMs!: Int64 = 25) {
+                timeoutSeconds!: Int64 = 600, batchMs!: Int64 = 25, transport!: String = "stdio") {
         this.pluginSource = pluginSource
         this.pluginArgs = pluginArgs
         this.baseName = base
         this.label = label
         this.timeoutSeconds = timeoutSeconds
         this.batchMs = batchMs
+        this.transport = transport
     }
 
     public func base(): String {
@@ -267,6 +272,14 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             }
             case None => ()
         }
+        // UDS 的 socket 文件由宿主创建，进程退出前删掉（bind 前 cordis 也会清残留）
+        if (this.udsSocket.size > 0) {
+            try {
+                removeIfExists(Path(this.udsSocket))
+            } catch (e: Exception) {
+                ()
+            }
+        }
     }
 
     // ---------- 内部 ----------
@@ -279,14 +292,23 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             }
         }
         // 启动在锁外做：拉起进程要等握手，抱着锁会把其它会话挡住
-        let manager = PluginManager({ id: String, line: String =>
+        let logger: (String, String) -> Unit = { id: String, line: String =>
             // 数据面：插件把增量写成 #UHP# 开头的 JSON 行，从 stderr 转发上来
             if (line.startsWith("#UHP#")) {
                 this.onEventLine(line)
             } else {
                 eprintln("[plugin:" + id + "] " + line)
             }
-        })
+        }
+        // stdio：逐行 JSON 走管道；uds：宿主 listen 一个 unix socket，插件以客户端身份连。
+        // UDS 路径有长度上限（~108 字节），所以用短前缀 + 时间戳，别拼长 harness 名。
+        let manager = if (this.transport == "uds") {
+            let sock = "/tmp/uhp-h-" + nowMillis().toString() + ".sock"
+            this.udsSocket = sock
+            PluginManager(sock, logger)
+        } else {
+            PluginManager(logger)
+        }
         let host = PluginHost(manager)
         let args = ArrayList<String>()
         for (a in this.pluginArgs) {
@@ -309,13 +331,15 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                 eprintln("[harness-plugin] 插件未就绪：" + msg)
                 return None
         }
-        // 握手检查：插件必须应答 harness 服务的 info 方法。
-        // 早失败比等第一个回合报错好查——「拉起了但方法不对」是个很容易看漏的状态。
-        match (this.invoke(active, "info", [])) {
-            case None =>
-                eprintln("[harness-plugin] 插件未应答 info（不是 harness 插件？）：" + this.pluginSource)
-                return None
-            case Some(_) => ()
+        // 就绪检查：插件必须能应答 harness 服务的 info，且返回值是带 base 的对象。
+        //
+        // 为什么要轮询而不是调一次：cordis 的握手是「先 provide 再跑插件 handler」的顺序，
+        // 宿主 awaitActive 通过时插件的 ctx.registerHandler 可能还没执行——此时 invoke 会被回成
+        // "INVOKE-ERROR: service 'harness' not provided by this plugin"（实测偶发）。
+        // 判据必须看返回结构，不能只看「有没有回包」：插件异常会被 cordis 包成字符串回包。
+        if (!this.waitPluginReady(active)) {
+            eprintln("[harness-plugin] 插件未就绪（info 不可用）：" + this.pluginSource)
+            return None
         }
         synchronized(this.lock) {
             // 并发首次调用时可能已经有人装好了：装好的那份为准，本次拉起的实例关掉
@@ -335,6 +359,36 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         }
         this.ensureFlusher()
         return Some(active)
+    }
+
+    // 等插件真正可用：轮询 info 直到返回带 base 的对象（最多 10s）
+    private func waitPluginReady(inst: PluginInstance): Bool {
+        let deadline = nowMillis() + 10000
+        while (nowMillis() < deadline) {
+            match (this.invoke(inst, "info", [])) {
+                case Some(v) =>
+                    if (this.isInfoShaped(v)) {
+                        return true
+                    }
+                case None => ()
+            }
+            sleep(Duration.millisecond * 20)
+        }
+        return false
+    }
+
+    // info 的约定返回：{base: "…", label: "…"}。
+    // 注意 cordis 会把插件侧异常包成字符串回包（"INVOKE-ERROR: …"），
+    // 所以「有回包」不等于「服务已注册」，必须校验结构。
+    private func isInfoShaped(v: JsonValue): Bool {
+        let fields = match (v) {
+            case JsonValue.Map(m) => m
+            case _ => return false
+        }
+        return match (fields.get("base")) {
+            case Some(JsonValue.String(s)) => s.size > 0
+            case _ => false
+        }
     }
 
     // 解析一行上报：{"ev":"harness","sid":...,"seq":...,"kind":...,"text":...}
@@ -666,6 +720,10 @@ func decodeOutcome(s: String): TurnOutcome {
             return TurnOutcome.Incomplete(IncompleteReason.Timeout, None)
         }
         return TurnOutcome.Incomplete(IncompleteReason.Other(reason), None)
+    }
+    if (s.startsWith("INVOKE-ERROR:")) {
+        // 插件侧抛了异常：cordis 把它包成字符串回给宿主
+        return TurnOutcome.Failed("harness_error", "插件调用失败：" + s["INVOKE-ERROR:".size..s.size])
     }
     if (s.startsWith("failed:")) {
         let rest = s["failed:".size..s.size]
