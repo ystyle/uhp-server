@@ -170,10 +170,11 @@ uhp-server（host）
 ## 8. 发布
 
 - 本仓是产品：打 tag + 出二进制包 + 出 Docker 镜像；**不发中心仓**。
-- 依赖切换：开发期 `cjpm.toml` 用 path 依赖（同工作区 `../uhp/*`）；对外构建时换成中心仓精确版本：
-  `uhp = "0.1.x"` / `uhp_acp = "0.1.x"` / `uhp_opencode = "0.1.x"`，并在这里维护兼容表。
-- 兼容表（发布时更新）：
+- 依赖全部来自**中心仓精确版本**（不再有 path 依赖，构建不需要任何同级 checkout）：
+  `uhp 0.1.1` / `uhp_acp 0.1.1` / `uhp_opencode 0.1.1` / `cordis_core·host·plugin 0.3.1`。
+- 兼容表（发版时更新）：
 
-| uhp-server | uhp | uhp-acp / uhp-opencode | 备注 |
-|---|---|---|---|
-| 0.1.x（开发） | path @ `44eaf6a` | path | 需要 `uhp` 0.1.1（含生命周期/动态 harness/客户端补齐，待发布） |
+| uhp-server | uhp | uhp-acp / uhp-opencode | cordis-cj | 备注 |
+|---|---|---|---|---|
+| 0.1.4+ | 0.1.1 | 0.1.1 | 0.3.1 | 全部中心仓依赖；`plugin_transport` 需 cordis ≥ 0.3.1（uds 支持更早已有） |
+| 0.1.0–0.1.3 | path | path | path | 开发期 |

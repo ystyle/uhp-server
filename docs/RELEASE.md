@@ -54,10 +54,10 @@ docker run --rm -p 8488:8488 -v "$PWD/uhp-server.toml:/app/uhp-server.toml:ro" \
 
 | uhp-server | uhp | uhp-acp / uhp-opencode | cordis-cj | 备注 |
 |---|---|---|---|---|
-| 0.1.x | path @ master | path @ master | path @ master | 开发期 |
+| 0.1.4+ | 0.1.1 | 0.1.1 | 0.3.1 | 全部中心仓依赖，CI 无需 checkout 兄弟仓 |
+| 0.1.0–0.1.3 | path | path | path | 开发期 |
 
-> 现在依赖是 path 依赖（CI 里并行 checkout 兄弟仓）。等 `uhp` 与 cordis-cj 有可依赖的发布版本后，
-> 把 `cjpm.toml` 切成中心仓精确版本，这张表就变成真正的版本约束。
+> 依赖已全部切到中心仓精确版本（uhp 0.1.1 / cordis 0.3.1）。升级依赖时改 `cjpm.toml` 的版本号并更新本表。
 
 ## 优雅退出（改之前先读）
 

@@ -14,9 +14,10 @@
 
 [dependencies]
   # 开发期用同工作区的 path 依赖；对外构建时切成中心仓版本（见 docs/design.md「发布」）
-  "uhp" = { path = "../uhp/uhp" }
-  "uhp_acp" = { path = "../uhp/uhp-acp" }
-  "uhp_opencode" = { path = "../uhp/uhp-opencode" }
+  # uhp 0.1.1 已发中心仓：直接按版本依赖，构建不再需要同级 checkout
+  "uhp" = "0.1.1"
+  "uhp_acp" = "0.1.1"
+  "uhp_opencode" = "0.1.1"
   "tomlcj" = "1.0.0"
   # P1：适配器进程隔离托管。cordis 0.3.1 起已发中心仓，直接按版本依赖（消费者视角，不再需要同级 checkout）。
   "ystyle::cordis_core" = "0.3.1"

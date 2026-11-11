@@ -16,13 +16,7 @@ jobs:
         with:
           path: uhp-server
 
-      # cordis（插件宿主）已发中心仓 0.3.1，按版本依赖，不需要同级 checkout。
-      # uhp/uhp-acp 仍是 path 依赖（其 0.1.1 尚未发布），发布后同样切成中心仓版本。
-      - name: Checkout uhp（SDK + 适配器）
-        uses: actions/checkout@v4
-        with:
-          repository: ystyle/uhp
-          path: uhp
+      # 依赖全部来自中心仓：uhp 0.1.1 + cordis 0.3.1，构建不需要任何同级 checkout。
 
       - uses: Zxilly/setup-cangjie@v3
         with:
