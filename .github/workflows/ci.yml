@@ -16,16 +16,13 @@ jobs:
         with:
           path: uhp-server
 
-      # 开发期依赖同工作区的仓（path 依赖 ../uhp/* 与 ../cordis-cj/*）；发布后换成中心仓版本。
+      # cordis（插件宿主）已发中心仓 0.3.1，按版本依赖，不需要同级 checkout。
+      # uhp/uhp-acp 仍是 path 依赖（其 0.1.1 尚未发布），发布后同样切成中心仓版本。
       - name: Checkout uhp（SDK + 适配器）
         uses: actions/checkout@v4
         with:
           repository: ystyle/uhp
           path: uhp
-
-      # cordis-cj 目前只有 AtomGit 仓（没有 GitHub 镜像），所以直接 clone。
-      - name: Checkout cordis-cj（插件宿主，P1 用）
-        run: git clone --depth 1 https://atomgit.com/ystyle/cordis-cj.git cordis-cj
 
       - uses: Zxilly/setup-cangjie@v3
         with:

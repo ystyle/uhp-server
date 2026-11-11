@@ -18,10 +18,10 @@
   "uhp_acp" = { path = "../uhp/uhp-acp" }
   "uhp_opencode" = { path = "../uhp/uhp-opencode" }
   "tomlcj" = "1.0.0"
-  # P1：适配器进程隔离托管。开发期 path 依赖同工作区的 cordis-cj；发布时换成中心仓版本。
-  "ystyle::cordis_core" = { path = "../cordis-cj/cordis_core" }
-  "ystyle::cordis_host" = { path = "../cordis-cj/cordis_host" }
-  "ystyle::cordis_plugin" = { path = "../cordis-cj/cordis_plugin" }
+  # P1：适配器进程隔离托管。cordis 0.3.1 起已发中心仓，直接按版本依赖（消费者视角，不再需要同级 checkout）。
+  "ystyle::cordis_core" = "0.3.1"
+  "ystyle::cordis_host" = "0.3.1"
+  "ystyle::cordis_plugin" = "0.3.1"
   "ystyle::jsonrpc" = "0.7.9"
   "jsonvalue" = "1.1.1"
 
