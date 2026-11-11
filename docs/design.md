@@ -85,18 +85,28 @@ uhp-server（host）
 `info` / `run` / `cancel` / `closeSession`；`close()` 经 `host.removePlugin` 终止进程。
 端到端测试：`src/plugin_test.cj`（scripted backend，不需要模型）。
 
-P1-a 的取舍（写清楚，别当成已完成）：
+已完成（P1-a + P1-b 流式）：
 
-| 项 | P1-a | P1-b（待做） |
-|---|---|---|
-| 回合执行 | `run` **整轮同步**，插件内缓冲增量后一次性回传 | 增量走事件上行（`events/emit` + `subscribeLocal`），宿主侧按 20–50ms 批量写 TurnSink |
-| 工具调用 | 只透出最终文本（`BufferedSink` 不转 toolCall） | tool_call / tool_result / producedFile 逐条映射 |
-| 问答（permission / elicitation） | 不支持（`capabilities` 如实报 false） | 两轮回路跨进程：插件挂起 → host 转 `input_request` → 下一轮答案回填 |
-| 启动等待 | invoke 前必须 `awaitActive`（否则插件服务表还空，invoke 回 INVOKE-ERROR） | 同 |
-| 崩溃自愈 | host 侧下一次 run 会重新拉起（`close()` 后重连） | 状态机感知 + 在跑回合明确失败 |
+| 项 | 现状 |
+|---|---|
+| 回合执行 | `run` 的 invoke **持续整个回合**；插件在自己的处理线程上跑驱动并逐条上报，宿主另起线程等结果 |
+| 增量上行 | 插件把每条增量写成 **stderr 上的 JSON 行**（`#UHP#{"ev":"harness","sid":…,"kind":…,"text":…}`），宿主 `PluginManager` 的 stderr 转发回调里解析 → `TurnSink` |
+| 工具调用 | `tool_call` / `tool_result` / `tool_args` / `degrade` 逐条映射（字段用 U+001F 分隔） |
+| 启动等待 | invoke 前必须 `awaitActive`（插件还在 `initialize` 时服务表是空的，invoke 会回 INVOKE-ERROR） |
+| 会话/进程回收 | `closeSession` → 插件内驱动；`close()` → `removePlugin` 终止进程 |
 
-为什么先同步：进程边界/生命周期/终态映射是本阶段的主要风险；流式与问答是纯增量改造，
-先让「隔离本身」可信，再加流式，比一次性堆两套机制更容易验证。
+**为什么数据面走 stderr 而不是 cordis 事件**：实测把 `ctx.emit` 放进回合执行线程连续上报，
+首帧之后插件连接就被打断（接收/写路径不是线程无关的）。stderr 由宿主逐行转发，
+天然串行、不占协议通道，控制面（invoke）与数据面（增量）也顺带分开了。
+
+仍待做（P1-c）：
+
+| 项 | 说明 |
+|---|---|
+| 产物字节 | 现在只上报文件名（`producedFile` 的字节没跨进程）——要么 base64，要么宿主侧回读 |
+| 跨进程问答 | permission / elicitation 的两轮回路：插件挂起 → host 转 `input_request` → 下一轮答案回填；现在 `capabilities` 如实报 false |
+| 崩溃感知 | 在跑的回合应明确失败而不是等超时 |
+| 增量合并 | 高吞吐时按 20–50ms 批量写 TurnSink（现在是每条一写） |
 
 ## 7. 与 `uhp` SDK 的待办（记在这里，别散落）
 

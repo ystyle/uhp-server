@@ -9,6 +9,8 @@ package uhp_server
 
 import std.collection.{ArrayList, HashMap}
 import std.sync.{AtomicBool, Mutex}
+import std.io.ByteBuffer
+import stdx.encoding.json.stream.JsonReader
 import jsonvalue.*
 import ystyle::cordis_core.*
 import ystyle::cordis_host.*
@@ -79,29 +81,41 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         synchronized(this.lock) {
             this.slots[ctx.sessionId] = slot
         }
-        // P1-a：整轮同步 —— 插件跑完把 {status,text,reasoning} 一起回传。
-        // 流式增量要事件上行（P1-b），这里先把进程边界与终态映射跑通。
-        let result = this.invoke(inst, "run", [JsonValue.String(ctx.sessionId), JsonValue.String(ctx.input)])
+        // P1-b：回合的 invoke 会一直挂到回合结束（插件在自己的处理线程上跑回合 + 逐条 emit），
+        // 所以这里另起一条线程等结果，主线程负责把取消转发出去、并在超时后收口。
+        // 增量由事件订阅（onEvent）直接写进 sink，不必等 invoke 返回。
+        let outcomeBox = OutcomeBox()
+        let self = this
+        let sessionId = ctx.sessionId
+        let input = ctx.input
+        spawn {
+            let r = self.invoke(inst, "run", [JsonValue.String(sessionId), JsonValue.String(input)])
+            let status = match (r) {
+                case Some(v) => asString(v)
+                case None => "failed:harness_error:插件调用失败"
+            }
+            outcomeBox.set(status)
+            synchronized(self.lock) {
+                self.slots.remove(sessionId)
+            }
+        }
+        let deadline = nowMillis() + this.timeoutSeconds * 1000
+        while (nowMillis() < deadline) {
+            match (outcomeBox.get()) {
+                case Some(status) => return decodeOutcome(status)
+                case None => ()
+            }
+            if (cancel.isCancelled()) {
+                // 取消是另一条 invoke：插件在自己的线程池里处理，不受正在跑的回合阻塞
+                let _ = this.invoke(inst, "cancel", [JsonValue.String(ctx.sessionId)])
+            }
+            sleep(Duration.millisecond * 10)
+        }
         synchronized(this.lock) {
             this.slots.remove(ctx.sessionId)
         }
-        match (result) {
-            case None => return TurnOutcome.Failed("harness_error", "harness 插件调用失败")
-            case Some(v) =>
-                let fields = match (v) {
-                    case JsonValue.Map(m) => m
-                    case _ => HashMap<String, JsonValue>()
-                }
-                let text = asString(fields.get("text") ?? JsonValue.Null)
-                if (text.size > 0) {
-                    sink.textDelta(text)
-                }
-                let reasoning = asString(fields.get("reasoning") ?? JsonValue.Null)
-                if (reasoning.size > 0) {
-                    sink.reasoningDelta(reasoning)
-                }
-                return decodeOutcome(asString(fields.get("status") ?? JsonValue.String("failed:harness_error:空结果")))
-        }
+        let _ = this.invoke(inst, "cancel", [JsonValue.String(ctx.sessionId)])
+        return TurnOutcome.Failed("harness_error", "harness 插件回合超时")
     }
 
     // 会话级回收：让插件里的适配器把 agent 侧作用域还回去
@@ -142,7 +156,12 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         }
         // 启动在锁外做：拉起进程要等握手，抱着锁会把其它会话挡住
         let manager = PluginManager({ id: String, line: String =>
-            eprintln("[plugin:" + id + "] " + line)
+            // 数据面：插件把增量写成 #UHP# 开头的 JSON 行，从 stderr 转发上来
+            if (line.startsWith("#UHP#")) {
+                this.onEventLine(line)
+            } else {
+                eprintln("[plugin:" + id + "] " + line)
+            }
         })
         let host = PluginHost(manager)
         let args = ArrayList<String>()
@@ -185,15 +204,23 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
         return Some(active)
     }
 
-    // 事件参数约定：[sessionId, seq, kind, text]（见 src/plugin/main.cj 的文件头）
-    private func onEvent(args: Array<JsonValue>): Unit {
-        if (args.size < 4) {
+    // 解析一行上报：{"ev":"harness","sid":...,"seq":...,"kind":...,"text":...}
+    // 任何解析失败都只记日志、不抛出——插件的一条坏行不该影响宿主。
+    private func onEventLine(line: String): Unit {
+        let v = try {
+            JsonValue.fromJson(JsonReader(ByteBuffer(line[5..line.size].toArray())))
+        } catch (e: Exception) {
+            eprintln("[harness-plugin] 坏事件行：" + line)
             return
         }
-        let sessionId = asString(args[0])
-        let seqN = asInt(args[1])
-        let kind = asString(args[2])
-        let text = asString(args[3])
+        let fields = match (v) {
+            case JsonValue.Map(m) => m
+            case _ => return
+        }
+        let sessionId = asString(fields.get("sid") ?? JsonValue.Null)
+        let seqN = asInt(fields.get("seq") ?? JsonValue.Null)
+        let kind = asString(fields.get("kind") ?? JsonValue.Null)
+        let text = asString(fields.get("text") ?? JsonValue.Null)
         let (sinkOpt, stale): (Option<TurnSink>, Bool) = synchronized(this.lock) {
             match (this.slots.get(sessionId)) {
                 case Some(slot) =>
@@ -231,6 +258,11 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
                 let out = if (parts.size > 1) { parts[1] } else { "" }
                 sink.toolResult(callId, out)
             case "degrade" => sink.degrade(text)
+            case "file" =>
+                // 跨进程只带文件名：字节内容要先编码，留到 P1-c
+                sink.producedFile(text, [])
+            case "ask_unsupported" =>
+                eprintln("[harness-plugin] 插件侧发起提问但跨进程问答未实现：" + text)
             case "outcome" =>
                 synchronized(this.lock) {
                     match (this.slots.get(sessionId)) {
@@ -300,4 +332,21 @@ func decodeOutcome(s: String): TurnOutcome {
         return TurnOutcome.Failed(code, msg)
     }
     return TurnOutcome.Failed("harness_error", "未知终态：" + s)
+}
+
+// 回合结果的交接槽：invoke 线程写，主线程读
+class OutcomeBox {
+    private let lock = Mutex()
+    private var value: Option<String> = None
+    public init() {}
+    public func set(v: String): Unit {
+        synchronized(this.lock) {
+            this.value = Some(v)
+        }
+    }
+    public func get(): Option<String> {
+        synchronized(this.lock) {
+            return this.value
+        }
+    }
 }

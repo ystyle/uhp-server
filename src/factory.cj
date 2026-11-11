@@ -82,6 +82,10 @@ func pluginArgsOf(h: HarnessSpec): Array<String> {
     if (h.kind == "scripted") {
         out.add("--reply")
         out.add(h.reply)
+        out.add("--chunks")
+        out.add(h.chunks.toString())
+        out.add("--delay-ms")
+        out.add(h.delay_ms.toString())
     }
     if (h.command.size > 0) {
         out.add("--command")
