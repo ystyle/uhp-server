@@ -323,22 +323,21 @@ public class CordisHarnessDriver <: HarnessDriver & HarnessLifecycle {
             eprintln("[harness-plugin] 拉起失败：" + e.message)
             return None
         }
-        // 必须等握手完成再 invoke：launchPlugin 返回时插件可能还在 initialize，
-        // 此时它的服务表是空的，invoke 会被回成 INVOKE-ERROR。
-        let active = match (host.awaitActive(entry.id, timeout: Duration.second * 30)) {
+        // 等插件真正可用：awaitReady = Active（握手 + provide 齐）**且**收到 ready（实现已注册）。
+        //
+        // 只用 awaitActive 不够：cordis 的插件顺序是「先 provide 再跑 handler」，
+        // 拿到 provide 时 ctx.registerHandler 可能还没执行，此刻 invoke 会被回成
+        // "INVOKE-ERROR: service 'harness' not provided by this plugin"（实测偶发）。
+        let active = match (host.awaitReady(entry.id, timeout: Duration.second * 30)) {
             case Result.Ok(a) => a
             case Result.Err(msg) =>
                 eprintln("[harness-plugin] 插件未就绪：" + msg)
                 return None
         }
-        // 就绪检查：插件必须能应答 harness 服务的 info，且返回值是带 base 的对象。
-        //
-        // 为什么要轮询而不是调一次：cordis 的握手是「先 provide 再跑插件 handler」的顺序，
-        // 宿主 awaitActive 通过时插件的 ctx.registerHandler 可能还没执行——此时 invoke 会被回成
-        // "INVOKE-ERROR: service 'harness' not provided by this plugin"（实测偶发）。
-        // 判据必须看返回结构，不能只看「有没有回包」：插件异常会被 cordis 包成字符串回包。
+        // 再补一道结构校验：info 必须返回带 base 的对象。
+        // 「有回包」不等于「服务可用」——cordis 会把插件侧异常包成字符串回包。
         if (!this.waitPluginReady(active)) {
-            eprintln("[harness-plugin] 插件未就绪（info 不可用）：" + this.pluginSource)
+            eprintln("[harness-plugin] 插件未应答有效的 info：可能不是 harness 插件（" + this.pluginSource + "）")
             return None
         }
         synchronized(this.lock) {

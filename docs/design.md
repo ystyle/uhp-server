@@ -111,12 +111,15 @@ uhp-server（host）
 | `stdio`（默认） | 管道 + 逐行 JSON 帧 | 不依赖文件系统，容器里最省事 |
 | `uds` | unix socket + Content-Length 帧 | 宿主 listen、插件连；路径有 ~108 字节上限，故用短名 `/tmp/uhp-h-<ms>.sock`，退出时删除 |
 
-**就绪判据不能只看「有回包」**：cordis 的插件启动顺序是「先 provide 再跑 handler」，
-宿主 `awaitActive` 通过时插件的 `ctx.registerHandler` 可能还没执行——此时 invoke 会被回成
+**就绪判据**：cordis 的插件启动顺序是「先 provide 再跑 handler」，宿主拿到 provide 时
+插件的 `ctx.registerHandler` 可能还没执行——此刻 invoke 会被回成
 `INVOKE-ERROR: service 'harness' not provided by this plugin`（实测偶发，表现为回合随机失败）。
-而且 cordis 会把插件侧异常包成字符串回包，所以「拿到回包」≠「服务可用」。
-故 `ensurePlugin` 之后轮询 `info` 直到返回**带 base 字段的对象**（最多 10s），
-`decodeOutcome` 也把 `INVOKE-ERROR:` 前缀单独映射成失败原因。
+
+- cordis 现在提供 `ready` 通知 + `PluginHost.awaitReady()`（= Active 且 handler 已执行完），
+  `ensurePlugin` 用它作为「可以 invoke」的判据；
+- 再补一道结构校验：`info` 必须返回**带 base 的对象**——cordis 会把插件侧异常包成字符串回包，
+  「有回包」≠「服务可用」；
+- `decodeOutcome` 把 `INVOKE-ERROR:` 前缀单独映射成失败原因，不落进「未知终态」。
 
 跨进程问答（P1-c 已完成）：
 
